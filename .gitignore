@@ -1,0 +1,6 @@
+# mem log + plans are internal notes (same policy as fapony)
+.fapony/
+.DS_Store
+/target
+AGENTS.md
+CLAUDE.md

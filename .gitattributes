@@ -1,0 +1,2 @@
+# append-only memory logs: keep both sides, never hand-resolve
+*.jsonl merge=union
