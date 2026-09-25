@@ -1,7 +1,11 @@
 # fael architecture
 
-> **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`; the CLI, MCP,
-> hooks and maintenance commands are design. This page is the contract the code is built against —
+> **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
+> `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet), `fael mcp`
+> (stdio, 3 tools), `fael hook <stop|session-start|read|edit>` (neutral + claude/codex adapters) with
+> per-machine usage accounting (`fael stats`), `fael install` (Claude Code, Codex, OpenCode),
+> and the maintenance commands `fael doctor [--fix]` · `fael compact` · `fael import` (SPEC §6, §11).
+> This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat
@@ -35,7 +39,7 @@ Three ideas carry the whole design:
 | Part | Job | Knows about |
 |---|---|---|
 | **log** | stores rows — the only source of truth | nothing (plain files) |
-| **core** | validates, appends, finds, ranks, decides | the row format · never a client |
+| **core** | validates, appends, finds, ranks, decides — `add_row` · `close_row` · `query` · `Config::from_toml` | the row format · never a client, never git or cwd: the adapter passes `Stamp { by, branch, sha }` and the config text |
 | **adapters** | turn each client's input/output into core calls | one client each · never the rules — paths go through `core.normalize`, never an adapter's own cleanup |
 
 Adding a client touches only an adapter. Changing a rule touches only core. Changing the format is a spec change.
@@ -101,10 +105,29 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael kickoff [anchor]` | the session brief: open issues, recent decisions, rows on other branches |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
-| `fael install [--dry-run]` | detect installed clients and wire MCP, hooks and skill into each one |
+| `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |
 | `fael compact` · `fael import <path> [--map old/=new/]` | maintenance |
 | `fael doctor [--fix]` | find and repair damaged logs — `--fix` moves bad lines to quarantine, it never deletes them |
 | `fael stats` | how many bytes and tokens fael has put into agents' context |
+
+`--files` in `find` matches a row's `files[]` only — exactly, as a directory (a zone), or by glob; an anchor's ref
+never matches as a directory. It does not fall back to searching text (fapony did); text is `find <text>`.
+Ids are accepted as a unique prefix and printed at the shortest length that stays unique (≥ 8).
+
+`.fael/config.toml` — every field is optional:
+
+```toml
+kinds = ["risk"]              # extra kinds on top of decision/issue/note
+key_domains = ["auth", "db"]  # first key segment; outside the list = warning, never a reject
+[budget]
+kickoff_tokens = 800          # kickoff, and find with no filter
+find_tokens = 800
+push_tokens = 800             # read/edit hook push
+[warn]
+row_tokens = 400
+[limit]
+row_bytes = 10240             # hard cap, never above 10 KiB
+```
 
 ### MCP (3 tools on stdio — each schema is paid for in every session, so the list stays short)
 
@@ -119,11 +142,13 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 Each client speaks its own hook format. The binary contains the adapters for the supported clients; everyone else uses the neutral format.
 
 ```
-fael hook <stop|session-start|read|edit> [--client claude|codex|opencode]   < stdin  > stdout
+fael hook <stop|session-start|read|edit> [--client claude|codex]   < stdin  > stdout
 
-neutral Event  {"event","cwd","session","client","files":[…],"stop_active"}
+neutral Event  {"cwd","session","client","files":[…],"stop_active","text"}
 neutral Reply  {"block":bool,"reason"?:str,"context"?:str}
 ```
+
+OpenCode has no Stop hook and runs plugins in-process: `fael install` writes a JS plugin that speaks the neutral format (a stop block becomes a prompt on `session.idle`). How to wire any other agent: [integrate.md](integrate.md).
 
 The hook always exits 0. If fael hits an internal error it replies with an empty Reply, because a memory tool must never break the agent's tool call.
 
@@ -146,14 +171,20 @@ Ranking is **deterministic**: the same log, query and budget give the same outpu
 
 **Enforce** — the agent tries to end a turn:
 ```
-client ─(stop event)─▶ core: commits this turn? ─no─▶ allow
-                                 │yes
-                                 ▼
-                         new row this turn? ─yes─▶ allow
-                                 │no
-                                 ▼
-                         block once, with the reason and the exact command to run
+client ─(edit event)─▶ append {"path","at"} to ~/.local/state/fael/sessions/<session+worktree>.jsonl
+
+client ─(stop event)─▶ edits recorded this session?
+                          │yes                                │no
+                          ▼                                   ▼
+                any edit after the session's        git commits since start
+                newest row (or any, if none)?       and no row this session?
+                          │                                   │
+                   no ─▶ allow  yes ─┐            no ─▶ allow  yes ─┐
+                                     ▼                              ▼
+                        block once per last row — a markdown list of the files
+                        (or commits) and the exact command, --files prefilled
 ```
+Edits, not commits, are the primary signal: many agents are told never to commit, and a commit-only rule never fires for them. Git is only the fallback for edits the hook never saw (a shell `sed`, a heredoc). Measuring from the newest row, not the session start, keeps a row filed early from covering hours of work after it; a new row reopens one more block. The edit list is per-machine runtime state, never in `.fael/`. The `session` string sent with `edit` must equal the one sent with `stop`.
 
 **Session start:**
 ```
@@ -184,6 +215,7 @@ Reading never fails: broken lines, leftover merge-conflict markers, duplicate id
 
 A query language, a daemon, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
 
-The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary. Two rules bind it:
+The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary. Three rules bind it:
 - **A repo, when there is one, is the truth** — the hosted side is a git client that commits rows into it; it is canonical storage only for workspaces with no repo. Syncing is a union of lines deduped by `id` (append-only + ULID), so there is nothing to resolve.
+- **It calls the same core entry points as the CLI** — `Stamp.by` from the signed-in user, no branch/sha. Hook session state (`~/.local/state/fael`) is CLI-only: HTTP clients have no edit or stop events, so there is nothing to carry to a phone.
 - **Export and import go through this public format without loss of semantic memory** — no data stays locked in the hosted side.

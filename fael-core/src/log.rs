@@ -1,7 +1,7 @@
 //! Reading and appending `.fael/log/**` (format.md §Layout, §Writers, §Readers).
 //! Reads never fail and take no lock; appends hold `.fael/.lock` and write one whole line.
 
-use crate::{Config, Row, validate, validate_close};
+use crate::{Config, Row, Stamp, closed, resolve, validate, validate_close, warnings};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -9,6 +9,23 @@ use std::path::{Path, PathBuf};
 
 /// A month file this big refuses appends — run `fael compact` (well under GitHub's 50 MiB warning is the point).
 pub const MONTH_MAX: u64 = 50 * 1024 * 1024;
+
+/// Every file under `dir`, sorted by path — what `read` and the maintenance
+/// commands (`doctor`, `compact`, `import`) all walk.
+pub(crate) fn collect_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = vec![];
+    walk(dir, &mut files);
+    files.sort();
+    files
+}
+
+/// A leftover merge-conflict marker line — skipped on read (both sides' rows
+/// kept), stripped by `doctor --fix`.
+pub(crate) fn is_marker(line: &str) -> bool {
+    ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
+        .iter()
+        .any(|m| line.starts_with(m))
+}
 
 /// Everything under `.fael/log/`, deduped by id (first by file order wins).
 #[derive(Debug, Default)]
@@ -21,11 +38,8 @@ pub struct Log {
 
 /// Read every log file under `<fael>/log/`. Missing dir = empty log. Never errors.
 pub fn read(fael: &Path) -> Log {
-    let mut files = vec![];
-    walk(&fael.join("log"), &mut files);
-    files.sort();
     let mut log = Log::default();
-    for f in &files {
+    for f in &collect_files(&fael.join("log")) {
         let name = f.to_string_lossy();
         if !name.ends_with(".jsonl") {
             continue;
@@ -41,8 +55,8 @@ pub fn read(fael: &Path) -> Log {
         };
         parse(&bytes, &name, out, &mut log.warnings);
     }
-    dedupe(&mut log.rows);
-    dedupe(&mut log.closes);
+    dedupe_ids(&mut log.rows);
+    dedupe_ids(&mut log.closes);
     log
 }
 
@@ -67,11 +81,7 @@ pub fn parse(bytes: &[u8], file: &str, out: &mut Vec<Row>, warnings: &mut Vec<St
     let tail = lines.pop().unwrap_or("");
     for (i, line) in lines.iter().enumerate() {
         let line = line.trim();
-        if line.is_empty()
-            || ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
-                .iter()
-                .any(|m| line.starts_with(m))
-        {
+        if line.is_empty() || is_marker(line) {
             continue;
         }
         match serde_json::from_str::<Row>(line) {
@@ -87,9 +97,55 @@ pub fn parse(bytes: &[u8], file: &str, out: &mut Vec<Row>, warnings: &mut Vec<St
     }
 }
 
-fn dedupe(rows: &mut Vec<Row>) {
+/// Drop duplicate `id`s, first by file order wins — shared by `read`,
+/// `compact` and `import` (a union merge duplicates lines everywhere).
+pub(crate) fn dedupe_ids(rows: &mut Vec<Row>) {
     let mut seen = HashSet::new();
     rows.retain(|r| r.id.is_empty() || seen.insert(r.id.clone()));
+}
+
+/// `log/<writer>/<yyyy-mm>[.close].jsonl` → the month; anything else → None
+/// (compact files and imports never match, so they are never rewritten).
+pub(crate) fn month_of(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_string_lossy();
+    let stem = name
+        .strip_suffix(".jsonl")?
+        .strip_suffix(".close")
+        .unwrap_or(name.strip_suffix(".jsonl")?);
+    let ok = stem.len() == 7
+        && stem.as_bytes()[4] == b'-'
+        && stem
+            .bytes()
+            .enumerate()
+            .all(|(i, c)| i == 4 || c.is_ascii_digit());
+    ok.then(|| stem.to_string())
+}
+
+/// Hold `.fael/.lock` across a multi-step rewrite (`compact`, `doctor --fix`)
+/// — the same lock single appends take.
+pub(crate) fn lock(fael: &Path) -> Result<std::fs::File, String> {
+    std::fs::create_dir_all(fael).map_err(|e| format!("{}: {e}", fael.display()))?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(fael.join(".lock"))
+        .map_err(|e| format!("lock: {e}"))?;
+    lock.lock().map_err(|e| format!("lock: {e}"))?;
+    Ok(lock)
+}
+
+/// Write-then-rename in the same directory (atomic on POSIX/NTFS).
+pub(crate) fn tmp_rename(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use crate::ulid;
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let tmp = dir.join(format!(".fael-tmp-{}", ulid()));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Validate an add row, then append it to `<fael>/log/<by>/<yyyy-mm>.jsonl`.
@@ -102,6 +158,48 @@ pub fn add(fael: &Path, row: &Row, cfg: &Config) -> Result<PathBuf, String> {
 pub fn close(fael: &Path, row: &Row, cfg: &Config) -> Result<PathBuf, String> {
     validate_close(row, cfg)?;
     append(fael, row, true)
+}
+
+/// Resolve `supersedes`, stamp, validate, append — the one add path every adapter (CLI, MCP,
+/// a server) goes through. `row.files` must already be normalised. Returns the non-fatal warnings.
+pub fn add_row(
+    fael: &Path,
+    log: &Log,
+    cfg: &Config,
+    stamp: &Stamp,
+    mut row: Row,
+    supersedes: Option<&str>,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    if let Some(s) = supersedes {
+        row.supersedes = Some(resolve(log, s)?.id.clone());
+    }
+    stamp.apply(&mut row);
+    let path = add(fael, &row, cfg)?;
+    let warns = warnings(&row, log, cfg);
+    Ok((row, path, warns))
+}
+
+/// Resolve `id`, stamp, validate, append a close row. Closing twice is a warning, not a reject.
+pub fn close_row(
+    fael: &Path,
+    log: &Log,
+    cfg: &Config,
+    stamp: &Stamp,
+    id: &str,
+    why: &str,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    let target = resolve(log, id)?;
+    let mut warns = vec![];
+    if closed(log).contains(target.id.as_str()) {
+        warns.push(format!(
+            "fael: {} is already closed — closing it again",
+            target.id
+        ));
+    }
+    let mut row = Row::close(&stamp.by, &target.id, why);
+    stamp.apply(&mut row);
+    let path = close(fael, &row, cfg)?;
+    Ok((row, path, warns))
 }
 
 /// Append without validating (import/compact write already-checked rows through here).

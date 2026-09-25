@@ -1,11 +1,30 @@
 //! fael-core — the log format (docs/format.md): row v1, validate, read, append under lock.
 //! Knows the row format, never a client. The CLI, MCP and hooks sit on top of this.
 
+mod compact;
+mod doctor;
+mod hook;
 mod id;
+mod import;
 mod log;
+mod query;
 
-pub use id::{now_ms, rfc3339, ulid, ulid_at, writer_id};
-pub use log::{Log, MONTH_MAX, add, append, close, parse, read};
+pub use compact::{Opts as CompactOpts, Report as CompactReport, WriterReport, compact};
+pub use import::{Opts as ImportOpts, Report as ImportReport, import};
+
+pub use doctor::{
+    Kind as ProblemKind, Problem, Report as DoctorReport, Severity, current_month,
+    fix as doctor_fix, scan as doctor_scan,
+};
+
+pub use hook::{StopFacts, decide_stop, last_row_ms};
+
+pub use id::{now_ms, rfc3339, ts_ms, ulid, ulid_at, writer_id};
+pub use log::{Log, MONTH_MAX, add, add_row, append, close, close_row, parse, read};
+pub use query::{
+    Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, keys, push, query, render,
+    resolve, superseded, warnings,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -82,13 +101,43 @@ impl Row {
     }
 }
 
-/// Per-repo settings from `.fael/config.toml` (loaded by the CLI; every field has a default).
+/// Who wrote a row and where the tree stood — the adapter fills it: git on a dev box,
+/// the signed-in user (no branch/sha) on a server. Core never asks git itself.
+#[derive(Debug, Clone, Default)]
+pub struct Stamp {
+    pub by: String,
+    pub branch: Option<String>,
+    pub sha: Option<String>,
+}
+
+impl Stamp {
+    fn apply(&self, row: &mut Row) {
+        if let Some(b) = &self.branch {
+            row.extra.insert("branch".into(), b.clone().into());
+        }
+        if let Some(s) = &self.sha {
+            row.extra.insert("sha".into(), s.clone().into());
+        }
+    }
+}
+
+/// Per-repo settings from `.fael/config.toml` (every field has a default; see `Config::from_toml`).
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Extra kinds this repo declares on top of `CORE_KINDS`.
     pub kinds: Vec<String>,
     /// Row size limit in bytes — clamped to `ROW_BYTES_MAX`.
     pub row_bytes: usize,
+    /// Allowed first segments of `key`; empty = any. Outside it is a warning, never a reject.
+    pub key_domains: Vec<String>,
+    /// Token budget for the session brief (`kickoff`, `find` with no filter).
+    pub kickoff_tokens: usize,
+    /// Token budget for `find` output.
+    pub find_tokens: usize,
+    /// Token budget for the read/edit hook push.
+    pub push_tokens: usize,
+    /// Warn when a row's text is estimated over this many tokens.
+    pub warn_row_tokens: usize,
 }
 
 impl Default for Config {
@@ -96,7 +145,56 @@ impl Default for Config {
         Config {
             kinds: vec![],
             row_bytes: ROW_BYTES_MAX,
+            key_domains: vec![],
+            kickoff_tokens: 800,
+            find_tokens: 800,
+            push_tokens: 800,
+            warn_row_tokens: 400,
         }
+    }
+}
+
+impl Config {
+    /// Parse `.fael/config.toml` text — every field optional. The caller reads the bytes
+    /// from wherever the repo lives; a missing file is `Config::default()`, not this.
+    pub fn from_toml(s: &str) -> Result<Config, String> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct File {
+            kinds: Vec<String>,
+            key_domains: Vec<String>,
+            budget: Budget,
+            warn: Warn,
+            limit: Limit,
+        }
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Budget {
+            kickoff_tokens: Option<usize>,
+            find_tokens: Option<usize>,
+            push_tokens: Option<usize>,
+        }
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Warn {
+            row_tokens: Option<usize>,
+        }
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Limit {
+            row_bytes: Option<usize>,
+        }
+        let f: File = toml::from_str(s).map_err(|e| e.to_string())?;
+        let d = Config::default();
+        Ok(Config {
+            kinds: f.kinds,
+            key_domains: f.key_domains,
+            row_bytes: f.limit.row_bytes.unwrap_or(d.row_bytes),
+            kickoff_tokens: f.budget.kickoff_tokens.unwrap_or(d.kickoff_tokens),
+            find_tokens: f.budget.find_tokens.unwrap_or(d.find_tokens),
+            push_tokens: f.budget.push_tokens.unwrap_or(d.push_tokens),
+            warn_row_tokens: f.warn.row_tokens.unwrap_or(d.warn_row_tokens),
+        })
     }
 }
 
@@ -158,7 +256,7 @@ fn check_common(row: &Row, cfg: &Config) -> Result<(), String> {
 /// with a letter, before the first `:` and before any `/`. Two chars minimum so `C:` stays a drive.
 /// Returns the ref — opaque to fael (`/` in it is not a path separator); it must be non-empty.
 // ponytail: a root-level file named like `notes:v2.md` reads as an anchor — rare, rename the file
-fn anchor(f: &str) -> Option<&str> {
+pub(crate) fn anchor(f: &str) -> Option<&str> {
     f.split_once(':')
         .filter(|(s, _)| {
             s.len() >= 2
