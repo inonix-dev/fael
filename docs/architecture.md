@@ -2,8 +2,8 @@
 
 > **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
 > `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet), `fael mcp`
-> (stdio, 3 tools), and `fael hook <stop|session-start|read|edit>` (neutral + claude adapters) with
-> per-machine usage accounting (`fael stats`); maintenance commands are design. This page is the contract the code is built against —
+> (stdio, 3 tools), and `fael hook <stop|session-start|read|edit>` (neutral + claude/codex adapters) with
+> per-machine usage accounting (`fael stats`), and `fael install` (Claude Code, Codex, OpenCode); maintenance commands are design. This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat
@@ -103,7 +103,7 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael kickoff [anchor]` | the session brief: open issues, recent decisions, rows on other branches |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
-| `fael install [--dry-run]` | detect installed clients and wire MCP, hooks and skill into each one |
+| `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |
 | `fael compact` · `fael import <path> [--map old/=new/]` | maintenance |
 | `fael doctor [--fix]` | find and repair damaged logs — `--fix` moves bad lines to quarantine, it never deletes them |
 | `fael stats` | how many bytes and tokens fael has put into agents' context |
@@ -140,11 +140,13 @@ row_bytes = 10240             # hard cap, never above 10 KiB
 Each client speaks its own hook format. The binary contains the adapters for the supported clients; everyone else uses the neutral format.
 
 ```
-fael hook <stop|session-start|read|edit> [--client claude|codex|opencode]   < stdin  > stdout
+fael hook <stop|session-start|read|edit> [--client claude|codex]   < stdin  > stdout
 
-neutral Event  {"event","cwd","session","client","files":[…],"stop_active"}
+neutral Event  {"cwd","session","client","files":[…],"stop_active","text"}
 neutral Reply  {"block":bool,"reason"?:str,"context"?:str}
 ```
+
+OpenCode has no Stop hook and runs plugins in-process: `fael install` writes a JS plugin that speaks the neutral format (a stop block becomes a prompt on `session.idle`). How to wire any other agent: [integrate.md](integrate.md).
 
 The hook always exits 0. If fael hits an internal error it replies with an empty Reply, because a memory tool must never break the agent's tool call.
 

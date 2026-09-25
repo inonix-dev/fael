@@ -4,6 +4,7 @@
 //! add/close/find over stdio (see mcp.rs).
 
 mod hook;
+mod install;
 mod mcp;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
@@ -21,6 +22,7 @@ const USAGE: &str = "usage:
    fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
    fael stats                  tokens fael has put into context, per machine
    fael mcp                      MCP server on stdio
+   fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
  every command takes --json";
 
 fn main() -> ExitCode {
@@ -46,6 +48,8 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
         ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
         ("mcp", []) => mcp::serve().map(|()| ExitCode::SUCCESS),
+        ("install", []) => install::cmd(a.one("client"), a.has("dry-run"), a.has("replace-fapony"))
+            .map(|()| ExitCode::SUCCESS),
         _ => Err(USAGE.into()),
     }
 }
@@ -77,7 +81,7 @@ impl Args {
                 None => (name.to_string(), None),
             };
             match name.as_str() {
-                "all" | "json" => {
+                "all" | "json" | "dry-run" | "replace-fapony" => {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" => {

@@ -155,7 +155,8 @@ fn tools() -> Value {
             "name": "add",
             "description": "Record something the next session must know: a decision and why, a bug (kind issue), \
     or state a later session needs (note). One standalone sentence or two — it is read months later with no chat. \
-    files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one.",
+    files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one. \
+    Saw something broken, inconsistent or likely to break? Add it as kind issue right there — do not wait for the end of the task.",
             "inputSchema": {"type": "object", "required": ["kind", "text", "files"], "properties": {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "text": str_("what happened and why, standalone"),
