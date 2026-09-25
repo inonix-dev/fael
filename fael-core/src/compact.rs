@@ -43,6 +43,10 @@ pub struct Report {
 /// existence checks, resolved through `al` so a merely renamed file never
 /// counts as gone. Errors when a source file has lines `read` would skip —
 /// run `fael doctor --fix` first, so no byte is ever dropped silently.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 pub fn compact(
     fael: &Path,
     root: &Path,

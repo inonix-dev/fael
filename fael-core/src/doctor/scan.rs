@@ -97,6 +97,10 @@ pub fn scan(fael: &Path, root: &Path, log_ignored: bool, month: &str) -> Report 
 
 /// One file's share of the scan — line numbers match `log::parse` exactly
 /// (1-based over complete lines; the unterminated tail is reported as torn).
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 fn scan_file(
     path: &Path,
     r: &mut Report,

@@ -20,6 +20,7 @@ The same checks CI runs:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+scripts/file-size.sh              # no .rs file over 400 lines
 cargo test --workspace --locked
 ```
 
@@ -40,6 +41,9 @@ cargo test --workspace --locked
 - **No abstraction for abstraction's sake** — no interface with one implementation, no scaffolding
   for a future that may not come.
 - **Prefer std** — a new dependency needs a reason a few lines of code can't cover.
+- **Small files** — 400 lines per `.rs` file, 100 per function (CI checks both). Past that, split
+  `x.rs` into `x.rs` + `x/` like `fael-core/src/query/`: memory is pushed per file, so small files
+  mean sharp, cheap context. Details in [AGENTS.md](AGENTS.md).
 
 ## Releasing (maintainers)
 
