@@ -9,6 +9,8 @@ part=${1:-patch}
 case $part in patch | minor | major) ;; *) echo "usage: $0 [patch|minor|major]" >&2; exit 2 ;; esac
 
 [ -z "$(git status --porcelain)" ] || { echo "release: working tree is dirty — commit or stash first" >&2; exit 1; }
+prs=$(gh pr list --state open --base main --json number --jq '[.[].number | "#\(.)"] | join(" ")')
+[ -z "$prs" ] || { echo "release: open PR(s) into main: $prs — merge or close them first" >&2; exit 1; }
 git checkout -q main
 git pull -q --ff-only
 
@@ -39,3 +41,6 @@ git tag -a "v$new" -m "release v$new"
 git push -q origin main --follow-tags
 
 echo "v$old -> v$new pushed. Watch: gh run watch \$(gh run list --workflow release.yml -L1 --json databaseId --jq '.[0].databaseId')"
+
+# owner's machine: pull every fael worktree onto the new main (alias fael-sync); skipped where `repos` is absent
+if command -v repos >/dev/null 2>&1; then repos fael sync; fi
