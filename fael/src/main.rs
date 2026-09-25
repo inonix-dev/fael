@@ -3,10 +3,12 @@
 //! `--json` prints one JSON row per line, uncut, for programs. `fael mcp` serves the same
 //! add/close/find over stdio (see mcp.rs).
 
+mod aliases;
 mod hook;
 mod install;
 mod maintain;
 mod mcp;
+mod write;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
 use std::collections::HashMap;
@@ -14,20 +16,24 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage:
-  fael add <kind> \"<text>\" --files a,b [--key k] [--supersedes id]
+  fael add <kind> \"<text>\" [--files a,b] [--key k] [--supersedes id] [--force]
+      (no --files = the files this session edited, as the edit hook recorded;
+       --force files a path that looks like a typo of an existing one)
   fael close <id> \"<why>\"
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
   fael keys [glob]
-   fael kickoff [file|anchor]
-   fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
-   fael stats                  tokens fael has put into context, per machine
-   fael doctor [--fix]
-   fael compact [--writer id] [--before yyyy-mm] [--prune]
-   fael import <path> [--map old/=new/]
-   fael mcp                      MCP server on stdio
-   fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
-   fael --version
- every command takes --json";
+  fael kickoff [file|anchor]
+  fael mv <old> <new>           record a move git can't see (anchors, uncommitted rewrites)
+  fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
+  fael stats                  tokens fael has put into context, per machine
+  fael doctor [--fix]
+  fael compact [--writer id] [--before yyyy-mm] [--prune]
+  fael import <path> [--map old/=new/]
+  fael mcp                      MCP server on stdio
+  fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
+  fael help | fael --help | fael <cmd> --help
+  fael --version
+  every command takes --json";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -44,6 +50,12 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         println!("fael {}", env!("CARGO_PKG_VERSION"));
         return Ok(ExitCode::SUCCESS);
     }
+    // `fael help`, `fael --help`, `fael <cmd> --help` — usage on stdout, exit 0
+    if argv.first().is_some_and(|c| c == "help") || argv.iter().any(|x| x == "--help" || x == "-h")
+    {
+        println!("{USAGE}");
+        return Ok(ExitCode::SUCCESS);
+    }
     let a = Args::parse(argv)?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
     let rest = a.pos.get(1..).unwrap_or_default();
@@ -53,6 +65,7 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         ("find", [] | [_]) => find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("keys", [] | [_]) => keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("mv", [old, new]) => mv(&a, old, new).map(|()| ExitCode::SUCCESS),
         ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
         ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
         ("doctor", []) => maintain::doctor(&a),
@@ -92,7 +105,7 @@ impl Args {
                 None => (name.to_string(), None),
             };
             match name.as_str() {
-                "all" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune" => {
+                "all" | "force" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune" => {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
@@ -247,33 +260,18 @@ fn written(a: &Args, r: &Repo, row: &Row, path: &Path) {
 
 fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
     let r = repo()?;
-    let (row, path, warns) = add_row(
+    let (row, path, warns) = write::add_row(
         &r,
         kind,
         text,
         &a.files(),
         a.one("key"),
         a.one("supersedes"),
+        a.has("force"),
     )?;
     warns.iter().for_each(|w| eprintln!("{w}"));
     written(a, &r, &row, &path);
     Ok(())
-}
-
-/// Normalise files against cwd, then core's add path — shared by the CLI and MCP.
-fn add_row(
-    r: &Repo,
-    kind: &str,
-    text: &str,
-    files: &[String],
-    key: Option<String>,
-    supersedes: Option<String>,
-) -> Result<(Row, PathBuf, Vec<String>), String> {
-    let files = core::normalize_files(files, &r.cwd, &r.root)?;
-    let st = stamp(r);
-    let mut row = Row::new(&st.by, kind, text, files);
-    row.key = key;
-    core::add_row(&r.fael, &read(r), &r.cfg, &st, row, supersedes.as_deref())
 }
 
 fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
@@ -288,18 +286,46 @@ fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>
     core::close_row(&r.fael, &read(r), &r.cfg, &stamp(r), id, why)
 }
 
+/// Record that `old` moved to `new` — for what git can't see (anchors,
+/// uncommitted rewrites, repos without git). Appends an alias row; the log
+/// stays append-only, nothing is rewritten.
+fn mv(a: &Args, old: &str, new: &str) -> Result<(), String> {
+    let r = repo()?;
+    let norm = core::normalize_files(&[old.to_string(), new.to_string()], &r.cwd, &r.root)?;
+    let (from, to) = (&norm[0], &norm[1]);
+    if from == to {
+        return Err(format!(
+            "rejected: {from:?} is already itself — `fael mv` needs two different paths"
+        ));
+    }
+    let log = read(&r);
+    if core::Aliases::from_log(&log).forward(from).contains(to) {
+        return Err(format!(
+            "rejected: {from} → {to} is already recorded — `fael find --files {to}` shows the rows"
+        ));
+    }
+    let (row, _) = core::mv_row(&r.fael, &r.cfg, &stamp(&r), from, to)?;
+    if a.has("json") {
+        println!("{}", row.to_line());
+    } else {
+        println!("{} → {from} → {to}", row.id);
+    }
+    Ok(())
+}
+
 fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
     let r = repo()?;
+    let files = core::normalize_files(&a.files(), &r.cwd, &r.root)?;
+    let log = read(&r);
     let f = Filter {
         text: text.cloned(),
-        files: core::normalize_files(&a.files(), &r.cwd, &r.root)?,
+        files: aliases::load(&r, &log, true).expand_all(&files),
         key: a.one("key"),
         kind: a.one("kind"),
         since: a.one("since"),
         by: a.one("by"),
         all: a.has("all"),
     };
-    let log = read(&r);
     let (rows, budget) = core::query(&log, &f, &r.cfg);
     show(a, &log, &rows, budget)?;
     // --all in JSON: also the close rows naming a shown row, so a consumer can tell closed from open
@@ -315,15 +341,17 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
 
 fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
     let r = repo()?;
+    let files = core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?;
+    let log = read(&r);
+    let al = aliases::load(&r, &log, true);
     let f = Filter {
-        files: core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?,
+        files: al.expand_all(&files),
         ..Filter::default()
     };
-    let log = read(&r);
     show(
         a,
         &log,
-        &core::kickoff(&log, &f, &r.root),
+        &core::kickoff(&log, &f, &r.root, &al),
         r.cfg.kickoff_tokens,
     )
 }

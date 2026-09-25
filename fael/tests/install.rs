@@ -29,6 +29,10 @@ fn read(p: &Path) -> String {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 fn install_all_three_idempotent_and_replaces_fapony_on_request() {
     let home = std::env::temp_dir().join(format!("fael-install-{}", fael_core::ulid()));
     let claude = home.join(".claude/settings.json");

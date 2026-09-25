@@ -3,7 +3,7 @@
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
 
-use crate::{Filter, add_row, close_row, core, read, repo};
+use crate::{Filter, aliases, close_row, core, read, repo, write::add_row};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -87,15 +87,16 @@ fn files(a: &Value) -> Vec<String> {
 
 fn find(a: &Value) -> Result<String, String> {
     let r = repo()?;
+    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
+    let log = read(&r);
     let f = Filter {
         text: s(a, "text"),
-        files: core::normalize_files(&files(a), &r.cwd, &r.root)?,
+        files: aliases::load(&r, &log, true).expand_all(&files),
         key: s(a, "key"),
         kind: s(a, "kind"),
         since: s(a, "since"),
         ..Filter::default()
     };
-    let log = read(&r);
     let (mut rows, budget) = core::query(&log, &f, &r.cfg);
     if let Some(n) = a["limit"].as_u64() {
         rows.truncate(n as usize);
@@ -116,6 +117,7 @@ fn add(a: &Value) -> Result<String, String> {
         &files(a),
         s(a, "key"),
         s(a, "supersedes"),
+        a["force"].as_bool().unwrap_or(false),
     )?;
     Ok(done(&row.id, warns))
 }
@@ -156,14 +158,16 @@ fn tools() -> Value {
             "description": "Record something the next session must know: a decision and why, a bug (kind issue), \
     or state a later session needs (note). One standalone sentence or two — it is read months later with no chat. \
     files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one. \
+    files may be omitted when this session edited files (the hook recorded them) — they are filled in; otherwise files is required. \
     Saw something broken, inconsistent or likely to break? Add it as kind issue right there — do not wait for the end of the task.",
-            "inputSchema": {"type": "object", "required": ["kind", "text", "files"], "properties": {
+            "inputSchema": {"type": "object", "required": ["kind", "text"], "properties": {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "text": str_("what happened and why, standalone"),
-                "files": {"type": "array", "items": {"type": "string"}, "minItems": 1,
-                    "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files"},
+                "files": {"type": "array", "items": {"type": "string"},
+                    "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),
                 "supersedes": str_("id of the row this one replaces"),
+                "force": {"type": "boolean", "description": "file a path that looks like a typo of an existing file (a file not created yet)"},
             }},
         },
         {

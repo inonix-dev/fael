@@ -40,9 +40,20 @@ pub struct Report {
 
 /// Rewrite eligible months. `month` is the current UTC `yyyy-mm` (injected so
 /// tests don't depend on the clock); `root` is only read for `--prune`
-/// existence checks. Errors when a source file has lines `read` would skip —
+/// existence checks, resolved through `al` so a merely renamed file never
+/// counts as gone. Errors when a source file has lines `read` would skip —
 /// run `fael doctor --fix` first, so no byte is ever dropped silently.
-pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Report, String> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
+pub fn compact(
+    fael: &Path,
+    root: &Path,
+    opts: &Opts,
+    month: &str,
+    al: &crate::Aliases,
+) -> Result<Report, String> {
     let _guard = lock(fael)?;
     let log = fael.join("log");
     // writer → eligible month files (sorted); writers filtered by --writer
@@ -100,7 +111,7 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
             .filter(|c| !resolved.contains(c.id.as_str()))
             .collect();
         let pruned = if opts.prune {
-            prune(&mut rows, root)
+            prune(&mut rows, root, al)
         } else {
             0
         };
@@ -208,11 +219,12 @@ pub(crate) fn fold(rows: &mut [Row], closes: &[Row]) -> Vec<(String, Row)> {
     done
 }
 
-/// Drop rows that are closed and whose files are all gone. Anchors are opaque
+/// Drop rows that are closed and whose files are all gone — through the
+/// resolver, so a row whose file was merely renamed stays. Anchors are opaque
 /// (never filesystem paths) and keep their row; rows without `files` are
 /// legacy and are never pruned.
-fn prune(rows: &mut Vec<Row>, root: &Path) -> usize {
+fn prune(rows: &mut Vec<Row>, root: &Path, al: &crate::Aliases) -> usize {
     let before = rows.len();
-    rows.retain(|r| !r.extra.contains_key("closed") || !crate::gone(root, r));
+    rows.retain(|r| !r.extra.contains_key("closed") || !crate::gone(root, r, al));
     before - rows.len()
 }

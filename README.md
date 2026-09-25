@@ -10,12 +10,21 @@
 Every session, an agent finds the same flaky test, re-asks why that function looks weird, and
 repeats the mistake the last agent already fixed. What it learned lived in a chat that is now gone.
 
+Asking agents to "take notes" doesn't work — they forget to, and nobody reads the notes anyway.
+fael fixes both ends: the agent **can't finish without writing**, and it **can't open a file without
+reading** what was written about it.
+
 fael gives the repo a memory that agents can't skip:
 
 - **They have to write.** When an agent edited files but recorded nothing, fael stops the turn and
   asks for a note. Mention a bug without filing it? Same.
 - **Memory finds them.** When an agent reads a file, the decisions and open bugs about *that file*
   come attached — nobody has to remember to search.
+- **It costs almost nothing to read.** Memory is pushed per file and cut to a token budget, so an
+  agent sees only the rows about the file in front of it (800 tokens by default) — not a notes dump.
+  `fael stats` shows exactly what fael has put into context.
+- **It follows the code.** Rename a file and its rows follow it (`git log -M`). Split one into
+  several and `fael mv old new` points the rows at the new files.
 - **It lives in git.** Rows are plain JSONL in `.fael/`. Clone the repo and you get every decision,
   bug and note with it — for every agent and every person on the team. No server, no account.
 
@@ -76,6 +85,7 @@ fael kickoff                                             # what this session sho
 fael find --files src/pay.rs                             # everything about one file
 fael add bug "refund rounds down on JPY" --files src/pay.rs
 fael close <id> "fixed in 4f2a91c"
+fael mv src/pay.rs src/pay/refund.rs                     # a split git can't see — rows follow
 fael doctor                                              # check the setup (e.g. a gitignored .fael/log)
 ```
 

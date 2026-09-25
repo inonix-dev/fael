@@ -148,6 +148,7 @@ fn push_ranks_exact_then_dir_then_key() {
         ids(&push(
             &l,
             &f.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &Aliases::default(),
         ))
     };
     // src/a.rs: 14 exact, 13 same dir (src/c.rs); 10 closed and 11 superseded never push
@@ -157,7 +158,7 @@ fn push_ranks_exact_then_dir_then_key() {
     // anchors push only on exact ref
     assert_eq!(q(&["doc:pricing/2026"]), ["15"]);
     assert!(q(&["doc:pricing"]).is_empty());
-    assert!(push(&l, &[]).is_empty());
+    assert!(push(&l, &[], &Aliases::default()).is_empty());
 }
 
 #[test]
@@ -169,11 +170,98 @@ fn push_shares_key_with_exact_hit() {
         &["elsewhere/z.rs"],
         Some("auth:session"), // same key as the exact hit 14
     ));
-    let got: Vec<String> = push(&l, &["src/a.rs".to_string()])
+    let got: Vec<String> = push(&l, &["src/a.rs".to_string()], &Aliases::default())
         .iter()
         .map(|r| r.id[24..].to_string())
         .collect();
     assert_eq!(got, ["14", "13", "16"]);
+}
+
+#[test]
+fn gone_resolves_renames_before_calling_a_file_missing() {
+    let r = std::env::temp_dir().join(format!("fael-gone-{}", ulid()));
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(r.join("b.rs"), "x").unwrap();
+    std::fs::write(r.join("c.rs"), "x").unwrap();
+    let al = Aliases::from_pairs(vec![
+        ("a.rs".to_string(), "b.rs".to_string()),
+        ("x.rs".to_string(), "y.rs".to_string()), // chain link 1
+        ("y.rs".to_string(), "c.rs".to_string()), // chain link 2
+    ]);
+    // renamed and present under the new path: not gone (chunk 2)
+    assert!(!gone(
+        &r,
+        &row("A0000000000000000000000010", "note", &["a.rs"], None),
+        &al
+    ));
+    // same row without the resolver: gone, the pre-chunk-2 behaviour
+    assert!(gone(
+        &r,
+        &row("A0000000000000000000000010", "note", &["a.rs"], None),
+        &Aliases::default()
+    ));
+    // rename chain resolves to the end: x.rs lives at c.rs now
+    assert!(!gone(
+        &r,
+        &row("A0000000000000000000000011", "note", &["x.rs"], None),
+        &al
+    ));
+    // no alias and no file: still gone
+    assert!(gone(
+        &r,
+        &row("A0000000000000000000000012", "note", &["del.rs"], None),
+        &al
+    ));
+    // renamed but the new path is missing too: still gone
+    let al2 = Aliases::from_pairs(vec![("old.rs".to_string(), "gone2.rs".to_string())]);
+    assert!(gone(
+        &r,
+        &row("A0000000000000000000000013", "note", &["old.rs"], None),
+        &al2
+    ));
+    // revert then rename, in incremental-cache order: a→m, m→a, a→c still reaches c.rs
+    // (01M3CVK41 — current() hit the a→m→a cycle and called it gone)
+    let al3 = Aliases::from_pairs(vec![
+        ("p.rs".to_string(), "m.rs".to_string()),
+        ("m.rs".to_string(), "p.rs".to_string()),
+        ("p.rs".to_string(), "c.rs".to_string()),
+    ]);
+    assert!(!gone(
+        &r,
+        &row("A0000000000000000000000016", "note", &["p.rs"], None),
+        &al3
+    ));
+    // anchors and file-less rows never go
+    assert!(!gone(
+        &r,
+        &row("A0000000000000000000000014", "note", &["doc:x"], None),
+        &al
+    ));
+    assert!(!gone(
+        &r,
+        &row("A0000000000000000000000015", "note", &[], None),
+        &al
+    ));
+}
+
+#[test]
+fn kickoff_keeps_rows_whose_files_were_renamed() {
+    let r = std::env::temp_dir().join(format!("fael-kick-{}", ulid()));
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(r.join("b.rs"), "x").unwrap();
+    let l = Log {
+        rows: vec![row("A0000000000000000000000010", "note", &["a.rs"], None)],
+        closes: vec![],
+        warnings: vec![],
+    };
+    let al = Aliases::from_pairs(vec![("a.rs".to_string(), "b.rs".to_string())]);
+    assert!(
+        kickoff(&l, &Filter::default(), &r, &al)
+            .iter()
+            .any(|x| x.id == "A0000000000000000000000010")
+    );
+    // without the resolver the moved row is dropped, as before
+    assert!(kickoff(&l, &Filter::default(), &r, &Aliases::default()).is_empty());
 }
 
 #[test]

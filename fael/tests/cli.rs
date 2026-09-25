@@ -3,12 +3,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Per-child `FAEL_STATE_DIR` at `<repo root>/state`, so a real session on this
+/// machine never leaks in and tests run in parallel without a global env lock.
+fn state_env(c: &mut Command, dir: &Path) {
+    let root = dir.ancestors().find(|p| p.join(".git").exists()).unwrap();
+    c.env("FAEL_STATE_DIR", root.join("state"));
+}
+
 fn fael(dir: &Path, args: &[&str]) -> (bool, String, String) {
-    let o = Command::new(env!("CARGO_BIN_EXE_fael"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
+    c.args(args).current_dir(dir);
+    state_env(&mut c, dir);
+    let o = c.output().unwrap();
     let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     (o.status.success(), s(&o.stdout), s(&o.stderr))
 }
@@ -34,6 +40,10 @@ fn repo() -> PathBuf {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 fn add_find_close_round_trip() {
     let d = repo();
     // relative to cwd: `a.rs` from src/ is stored as src/a.rs
@@ -51,6 +61,9 @@ fn add_find_close_round_trip() {
     );
     assert!(ok, "{err}");
     let id = out.split_whitespace().next().unwrap().to_string();
+    // the first write keeps .lock out of git, even with no alias cache yet (01M3CM2P3)
+    let ignore = std::fs::read_to_string(d.join(".fael/.gitignore")).unwrap();
+    assert!(ignore.lines().any(|l| l == ".lock"), "{ignore}");
     // Windows prints `\` separators
     assert!(
         out.replace('\\', "/").contains(".fael/log/test-user-"),
@@ -73,6 +86,11 @@ fn add_find_close_round_trip() {
 
     let (ok, _, err) = fael(&d, &["close", &id[..12], "fixed"]);
     assert!(ok, "{err}");
+    // closing twice writes nothing — the log stays clean
+    let (ok, _, err) = fael(&d, &["close", &id[..12], "again"]);
+    assert!(!ok && err.contains("already closed"), "{err}");
+    let (_, out, _) = fael(&d, &["find", "--json", "--all", "--files", "src/a.rs"]);
+    assert_eq!(out.matches("\"ref\":").count(), 1, "{out}");
     let (_, out, err) = fael(&d, &["find", "--files", "src/a.rs"]);
     assert!(out.is_empty() && err.contains("no rows match"), "{out}");
     let (_, out, _) = fael(&d, &["find", "--all", "--files", "src/a.rs"]);
@@ -178,6 +196,7 @@ fn mcp_round_trip() {
     ];
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
         .arg("mcp")
+        .env("FAEL_STATE_DIR", d.join("state"))
         .current_dir(&d)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

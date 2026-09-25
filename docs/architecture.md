@@ -1,7 +1,7 @@
 # fael architecture
 
 > **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
-> `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet), `fael mcp`
+> `add` `close` `find` `keys` `kickoff` `mv` in the `fael` CLI (`find --branches` not yet), `fael mcp`
 > (stdio, 3 tools), `fael hook <stop|session-start|read|edit>` (neutral + claude/codex adapters) with
 > per-machine usage accounting (`fael stats`), `fael install` (Claude Code, Codex, OpenCode),
 > and the maintenance commands `fael doctor [--fix]` · `fael compact` · `fael import` (SPEC §6, §11).
@@ -102,6 +102,7 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael close <id> "<why>"` | append a close row |
 | `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
+| `fael mv <old> <new>` | record a move git can't see — an anchor, an uncommitted rewrite, or one file split into several (one old path may point at many new ones). Adds matches only, never hides a row |
 | `fael kickoff [anchor]` | the session brief: open issues, then the rest by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
@@ -112,6 +113,8 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 
 `--files` in `find` matches a row's `files[]` only — exactly, as a directory (a zone), or by glob; an anchor's ref
 never matches as a directory. It does not fall back to searching text (fapony did); text is `find <text>`.
+Queries expand through rename aliases first, so a row filed under a path that was renamed since (`git log -M`,
+cached in `.fael/cache/aliases.json`, plus `fael mv` rows) still matches at the new path.
 Ids are accepted as a unique prefix and printed at the shortest length that stays unique (≥ 8).
 
 `.fael/config.toml` — every field is optional:
@@ -119,6 +122,7 @@ Ids are accepted as a unique prefix and printed at the shortest length that stay
 ```toml
 kinds = ["risk"]              # extra kinds on top of decision/issue/note
 key_domains = ["auth", "db"]  # first key segment; outside the list = warning, never a reject
+resolve = true                # follow renames (git log -M + fael mv rows); false = match files[] literally
 [budget]
 kickoff_tokens = 800          # kickoff, and find with no filter
 find_tokens = 800

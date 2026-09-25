@@ -9,3 +9,7 @@ lto = true
 # cargo-dist builds with this profile
 [profile.dist]
 inherits = "release"
+
+# Long functions are what grow into god files; scripts/file-size.sh guards whole files.
+[workspace.lints.clippy]
+too_many_lines = "warn"

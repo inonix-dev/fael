@@ -1,7 +1,9 @@
 //! Reading and appending `.fael/log/**` (format.md §Layout, §Writers, §Readers).
 //! Reads never fail and take no lock; appends hold `.fael/.lock` and write one whole line.
 
-use crate::{Config, Row, Stamp, closed, resolve, validate, validate_close, warnings};
+use crate::{
+    Config, Row, Stamp, closed, resolve, validate, validate_alias, validate_close, warnings,
+};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -121,10 +123,33 @@ pub(crate) fn month_of(path: &Path) -> Option<String> {
     ok.then(|| stem.to_string())
 }
 
+/// Keep `.fael/.lock` out of git (format.md §Layout): whoever takes the lock
+/// makes sure `.fael/.gitignore` names it — appended to an owner's file, never
+/// rewriting it. Fail-open: a write error only leaves the file as it was.
+// ponytail: one small read per append; the hook read/edit path never appends
+fn ignore_lock(fael: &Path) {
+    let path = fael.join(".gitignore");
+    let cur = fs::read_to_string(&path).unwrap_or_default();
+    if cur.lines().any(|l| l.trim() == ".lock") {
+        return;
+    }
+    let sep = if cur.is_empty() || cur.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let _ = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(format!("{sep}.lock\n").as_bytes()));
+}
+
 /// Hold `.fael/.lock` across a multi-step rewrite (`compact`, `doctor --fix`)
 /// — the same lock single appends take.
 pub(crate) fn lock(fael: &Path) -> Result<std::fs::File, String> {
     std::fs::create_dir_all(fael).map_err(|e| format!("{}: {e}", fael.display()))?;
+    ignore_lock(fael);
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -179,7 +204,7 @@ pub fn add_row(
     Ok((row, path, warns))
 }
 
-/// Resolve `id`, stamp, validate, append a close row. Closing twice is a warning, not a reject.
+/// Resolve `id`, stamp, validate, append a close row. A row already closed is rejected.
 pub fn close_row(
     fael: &Path,
     log: &Log,
@@ -189,17 +214,31 @@ pub fn close_row(
     why: &str,
 ) -> Result<(Row, PathBuf, Vec<String>), String> {
     let target = resolve(log, id)?;
-    let mut warns = vec![];
+    // a second close row adds nothing but noise to an append-only log
     if closed(log).contains(target.id.as_str()) {
-        warns.push(format!(
-            "fael: {} is already closed — closing it again",
-            target.id
-        ));
+        return Err(format!("rejected: {} is already closed", target.id));
     }
+    let warns = vec![];
     let mut row = Row::close(&stamp.by, &target.id, why);
     stamp.apply(&mut row);
     let path = close(fael, &row, cfg)?;
     Ok((row, path, warns))
+}
+
+/// Build, stamp, validate and append an alias row (`fael mv <old> <new>`).
+/// `from`/`to` must already be normalised. Returns the row and its file.
+pub fn mv_row(
+    fael: &Path,
+    cfg: &Config,
+    stamp: &Stamp,
+    from: &str,
+    to: &str,
+) -> Result<(Row, PathBuf), String> {
+    let mut row = Row::moved(&stamp.by, from, to);
+    stamp.apply(&mut row);
+    validate_alias(&row, cfg)?;
+    let path = append(fael, &row, false)?;
+    Ok((row, path))
 }
 
 /// Append without validating (import/compact write already-checked rows through here).
@@ -228,6 +267,7 @@ pub fn append(fael: &Path, row: &Row, is_close: bool) -> Result<PathBuf, String>
     let io = |e: std::io::Error| format!("{}: {e}", path.display());
 
     fs::create_dir_all(&dir).map_err(io)?;
+    ignore_lock(fael);
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)

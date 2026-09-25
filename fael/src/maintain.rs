@@ -31,9 +31,12 @@ pub fn doctor(a: &Args) -> Result<ExitCode, String> {
         });
     }
     let log = crate::read(&r);
+    // Gone is judged through the resolver: a file that was renamed still
+    // exists under its new path, so its rows still push and are not gone.
+    let al = crate::aliases::load(&r, &log, true);
     let gone: Vec<_> = core::find(&log, &core::Filter::default())
         .into_iter()
-        .filter(|row| core::gone(&r.root, row))
+        .filter(|row| core::gone(&r.root, row, &al))
         .collect();
     if !gone.is_empty() {
         let w = core::abbrev(&log);
@@ -118,7 +121,10 @@ pub fn compact(a: &Args) -> Result<ExitCode, String> {
         before: a.one("before"),
         prune: a.has("prune"),
     };
-    let rep = core::compact(&r.fael, &r.root, &opts, &core::current_month())?;
+    // prune judges "gone" through the resolver, so the aliases are loaded
+    // the same way kickoff loads them (refresh = pick up latest renames)
+    let al = crate::aliases::load(&r, &crate::read(&r), true);
+    let rep = core::compact(&r.fael, &r.root, &opts, &core::current_month(), &al)?;
     if a.has("json") {
         let ws: Vec<_> = rep
             .writers
