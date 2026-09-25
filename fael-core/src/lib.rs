@@ -3,9 +3,14 @@
 
 mod id;
 mod log;
+mod query;
 
 pub use id::{now_ms, rfc3339, ulid, ulid_at, writer_id};
 pub use log::{Log, MONTH_MAX, add, append, close, parse, read};
+pub use query::{
+    Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, keys, render, resolve,
+    superseded, warnings,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -89,6 +94,14 @@ pub struct Config {
     pub kinds: Vec<String>,
     /// Row size limit in bytes — clamped to `ROW_BYTES_MAX`.
     pub row_bytes: usize,
+    /// Allowed first segments of `key`; empty = any. Outside it is a warning, never a reject.
+    pub key_domains: Vec<String>,
+    /// Token budget for the session brief (`kickoff`, `find` with no filter).
+    pub kickoff_tokens: usize,
+    /// Token budget for `find` output.
+    pub find_tokens: usize,
+    /// Warn when a row's text is estimated over this many tokens.
+    pub warn_row_tokens: usize,
 }
 
 impl Default for Config {
@@ -96,6 +109,10 @@ impl Default for Config {
         Config {
             kinds: vec![],
             row_bytes: ROW_BYTES_MAX,
+            key_domains: vec![],
+            kickoff_tokens: 800,
+            find_tokens: 800,
+            warn_row_tokens: 400,
         }
     }
 }
@@ -158,7 +175,7 @@ fn check_common(row: &Row, cfg: &Config) -> Result<(), String> {
 /// with a letter, before the first `:` and before any `/`. Two chars minimum so `C:` stays a drive.
 /// Returns the ref — opaque to fael (`/` in it is not a path separator); it must be non-empty.
 // ponytail: a root-level file named like `notes:v2.md` reads as an anchor — rare, rename the file
-fn anchor(f: &str) -> Option<&str> {
+pub(crate) fn anchor(f: &str) -> Option<&str> {
     f.split_once(':')
         .filter(|(s, _)| {
             s.len() >= 2

@@ -1,7 +1,8 @@
 # fael architecture
 
-> **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`; the CLI, MCP,
-> hooks and maintenance commands are design. This page is the contract the code is built against —
+> **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
+> `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet); MCP, hooks and maintenance
+> commands are design. This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat
@@ -105,6 +106,24 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael compact` · `fael import <path> [--map old/=new/]` | maintenance |
 | `fael doctor [--fix]` | find and repair damaged logs — `--fix` moves bad lines to quarantine, it never deletes them |
 | `fael stats` | how many bytes and tokens fael has put into agents' context |
+
+`--files` in `find` matches a row's `files[]` only — exactly, as a directory (a zone), or by glob; an anchor's ref
+never matches as a directory. It does not fall back to searching text (fapony did); text is `find <text>`.
+Ids are accepted as a unique prefix and printed at the shortest length that stays unique (≥ 8).
+
+`.fael/config.toml` — every field is optional:
+
+```toml
+kinds = ["risk"]              # extra kinds on top of decision/issue/note
+key_domains = ["auth", "db"]  # first key segment; outside the list = warning, never a reject
+[budget]
+kickoff_tokens = 800          # kickoff, and find with no filter
+find_tokens = 800
+[warn]
+row_tokens = 400
+[limit]
+row_bytes = 10240             # hard cap, never above 10 KiB
+```
 
 ### MCP (3 tools on stdio — each schema is paid for in every session, so the list stays short)
 
