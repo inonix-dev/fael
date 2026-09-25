@@ -412,7 +412,14 @@ fn compact_folds_sorts_and_deletes_past_months() {
         &month_file(&fael, "tester-0000", "2026-09", false),
         &[row("A0000000000000000000000004", "note", &["a.rs"]).to_line()],
     );
-    let rep = compact(&fael, &r, &CompactOpts::default(), MONTH, &Aliases::default()).unwrap();
+    let rep = compact(
+        &fael,
+        &r,
+        &CompactOpts::default(),
+        MONTH,
+        &Aliases::default(),
+    )
+    .unwrap();
     assert_eq!(rep.writers.len(), 1);
     let w = &rep.writers[0];
     assert_eq!((w.rows, w.folded, w.carried, w.pruned), (3, 1, 0, 0));
@@ -455,7 +462,14 @@ fn compact_nothing_eligible_is_an_error() {
         &month_file(&fael, "tester-0000", "2026-09", false),
         &[row("A0000000000000000000000001", "note", &["a.rs"]).to_line()],
     );
-    let e = compact(&fael, &r, &CompactOpts::default(), MONTH, &Aliases::default()).unwrap_err();
+    let e = compact(
+        &fael,
+        &r,
+        &CompactOpts::default(),
+        MONTH,
+        &Aliases::default(),
+    )
+    .unwrap_err();
     assert!(e.contains("no past months"), "{e}");
 }
 
@@ -599,7 +613,10 @@ fn compact_prune_keeps_closed_rows_whose_files_were_renamed() {
     .unwrap();
     assert_eq!(rep.writers[0].pruned, 0); // merely renamed, never pruned
     let ids: Vec<String> = read(&fael).rows.iter().map(|x| x.id.clone()).collect();
-    assert!(ids.contains(&"A0000000000000000000000001".to_string()), "{ids:?}");
+    assert!(
+        ids.contains(&"A0000000000000000000000001".to_string()),
+        "{ids:?}"
+    );
 }
 
 #[test]
@@ -613,7 +630,14 @@ fn compact_refuses_dirty_sources() {
             "broken".into(),
         ],
     );
-    let e = compact(&fael, &r, &CompactOpts::default(), MONTH, &Aliases::default()).unwrap_err();
+    let e = compact(
+        &fael,
+        &r,
+        &CompactOpts::default(),
+        MONTH,
+        &Aliases::default(),
+    )
+    .unwrap_err();
     assert!(e.contains("doctor --fix"), "{e}");
     assert!(month_file(&fael, "tester-0000", "2026-07", false).exists()); // nothing deleted
 }
@@ -629,7 +653,14 @@ fn compact_carries_closes_with_no_target() {
         &["A0000000000000000000000001"],
         &[("C0000000000000000000000001", "MISSING")],
     );
-    let rep = compact(&fael, &r, &CompactOpts::default(), MONTH, &Aliases::default()).unwrap();
+    let rep = compact(
+        &fael,
+        &r,
+        &CompactOpts::default(),
+        MONTH,
+        &Aliases::default(),
+    )
+    .unwrap();
     assert_eq!((rep.writers[0].folded, rep.writers[0].carried), (0, 1));
     let log = read(&fael);
     assert_eq!(log.closes.len(), 1); // the companion .close.jsonl is read as closes

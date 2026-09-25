@@ -102,11 +102,9 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
 /// no files is never gone. Such rows never push, so kickoff drops them too.
 pub fn gone(root: &std::path::Path, r: &Row, al: &Aliases) -> bool {
     !r.files.is_empty()
-        && r.files.iter().all(|f| {
-            anchor(f).is_none()
-                && !root.join(f).exists()
-                && al.current(f).is_none_or(|c| !root.join(c).exists())
-        })
+        && r.files
+            .iter()
+            .all(|f| anchor(f).is_none() && al.forward(f).iter().all(|p| !root.join(p).exists()))
 }
 
 /// The session brief (kickoff, and `find` with no filter): open issues, then decisions, then
@@ -129,20 +127,14 @@ pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
 /// about a file nobody touches sinks, and one about the file changed yesterday rises.
 // ponytail: file mtime is the "current work" signal — no git spawn on session start; a fresh
 // clone or checkout resets mtimes, then the order falls back to roughly newest-row first.
-pub fn kickoff<'a>(
-    log: &'a Log,
-    f: &Filter,
-    root: &std::path::Path,
-    al: &Aliases,
-) -> Vec<&'a Row> {
+pub fn kickoff<'a>(log: &'a Log, f: &Filter, root: &std::path::Path, al: &Aliases) -> Vec<&'a Row> {
     let fresh = |r: &Row| {
         let row_ms = crate::ts_ms(&r.ts).unwrap_or(0);
         r.files
             .iter()
             // freshness follows the rename: the old path is gone, the new one
             // is what the worktree last touched
-            .flat_map(|f| [f.clone(), al.current(f).unwrap_or_default()])
-            .filter(|f| !f.is_empty())
+            .flat_map(|f| al.forward(f))
             .filter_map(|f| {
                 std::fs::metadata(root.join(f))
                     .and_then(|m| m.modified())

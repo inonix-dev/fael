@@ -118,6 +118,30 @@ impl Aliases {
         out
     }
 
+    /// A row's path → itself plus every path it was renamed to, following all
+    /// pairs (not just the first match), so a revert `a→b→a` then `a→c`
+    /// still reaches `c` whatever order the pairs were cached in.
+    pub fn forward(&self, f: &str) -> Vec<String> {
+        let anchored = anchor(f).is_some();
+        let mut seen = HashSet::new();
+        let mut out = vec![];
+        let mut stack = vec![f.to_string()];
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur.clone()) {
+                continue;
+            }
+            for (o, n) in &self.pairs {
+                if cur == *o {
+                    stack.push(n.clone());
+                } else if !anchored && under(&cur, o) {
+                    stack.push(format!("{n}{}", &cur[o.len()..]));
+                }
+            }
+            out.push(cur);
+        }
+        out
+    }
+
     /// A row's path → where it lives now (`None` = no rename known, or the
     /// renames cycle so there is no single answer). Follows chains to the end.
     pub fn current(&self, f: &str) -> Option<String> {
