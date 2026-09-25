@@ -120,10 +120,16 @@ pub fn scan(fael: &Path, root: &Path, log_ignored: bool, month: &str) -> Report 
     let mut no_files = 0usize;
     let mut no_files_example = String::new();
     for f in &files {
-        scan_file(f, &mut r, &mut ids, &mut no_files, &mut no_files_example, month);
+        scan_file(
+            f,
+            &mut r,
+            &mut ids,
+            &mut no_files,
+            &mut no_files_example,
+            month,
+        );
     }
-    let mut dupes: Vec<(&String, &usize)> =
-        ids.iter().filter(|(_, n)| **n > 1).collect();
+    let mut dupes: Vec<(&String, &usize)> = ids.iter().filter(|(_, n)| **n > 1).collect();
     dupes.sort();
     for (id, n) in dupes {
         r.problems.push(Problem::error(
@@ -162,7 +168,8 @@ pub fn scan(fael: &Path, root: &Path, log_ignored: bool, month: &str) -> Report 
             Kind::Ignored,
             false,
             None,
-            ".fael/log is gitignored — rows stay on this machine, `fael doctor` always reports it".into(),
+            ".fael/log is gitignored — rows stay on this machine, `fael doctor` always reports it"
+                .into(),
         ));
     }
     r
@@ -189,7 +196,10 @@ fn scan_file(
         ));
         return;
     };
-    if bytes.starts_with(b"\xef\xbb\xbf") || bytes.windows(2).any(|w| w == b"\r\n") || String::from_utf8(bytes.clone()).is_err() {
+    if bytes.starts_with(b"\xef\xbb\xbf")
+        || bytes.windows(2).any(|w| w == b"\r\n")
+        || String::from_utf8(bytes.clone()).is_err()
+    {
         r.problems.push(Problem::error(
             Kind::Encoding,
             true,
@@ -218,7 +228,9 @@ fn scan_file(
                     *ids.entry(row.id.clone()).or_insert(0) += 1;
                 }
                 // close-shaped rows carry no `files` by design — only adds count
-                if row.files.is_empty() && row.reference.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                if row.files.is_empty()
+                    && row.reference.as_deref().is_none_or(|t| t.trim().is_empty())
+                {
                     *no_files += 1;
                     if no_files_example.is_empty() {
                         *no_files_example = format!("{}:{}", name, i + 1);
@@ -233,7 +245,11 @@ fn scan_file(
             Kind::Broken,
             true,
             file.clone(),
-            format!("{name}:{}: {} broken line(s) skipped on read", fmt_nums(&broken), broken.len()),
+            format!(
+                "{name}:{}: {} broken line(s) skipped on read",
+                fmt_nums(&broken),
+                broken.len()
+            ),
         ));
     }
     if markers > 0 {
@@ -241,7 +257,9 @@ fn scan_file(
             Kind::Conflict,
             true,
             file.clone(),
-            format!("{name}: {markers} merge-conflict marker line(s) — rows on both sides are kept"),
+            format!(
+                "{name}: {markers} merge-conflict marker line(s) — rows on both sides are kept"
+            ),
         ));
     }
     if !tail.trim().is_empty() {
@@ -272,7 +290,12 @@ fn scan_file(
 
 fn fmt_nums(ns: &[usize]) -> String {
     const MAX: usize = 8;
-    let mut s = ns.iter().take(MAX).map(usize::to_string).collect::<Vec<_>>().join(",");
+    let mut s = ns
+        .iter()
+        .take(MAX)
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     if ns.len() > MAX {
         s.push_str(&format!(",+{}", ns.len() - MAX));
     }
@@ -285,7 +308,9 @@ fn multi_fael(root: &Path) -> Vec<String> {
     let mut out = vec![];
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if !p.is_dir() {
@@ -354,7 +379,11 @@ pub fn fix(fael: &Path, root: &Path, report: &Report) -> Result<Vec<String>, Str
 fn repair_file(fael: &Path, path: &Path) -> Result<Option<String>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text).replace("\r\n", "\n").replace('\r', "\n");
+    let text = text
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&text)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut lines: Vec<&str> = text.split('\n').collect();
     let tail = lines.pop().unwrap_or("");
     // re-derive what's broken/markers post-normalisation (same rules as scan)
@@ -422,7 +451,11 @@ fn is_clean(bytes: &[u8]) -> bool {
 fn quarantine(fael: &Path, path: &Path) -> Result<PathBuf, String> {
     let dir = fael.join("quarantine");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let rel = path.strip_prefix(fael).unwrap_or(path).to_string_lossy().replace(['/', '\\'], ".");
+    let rel = path
+        .strip_prefix(fael)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace(['/', '\\'], ".");
     let q = dir.join(format!("{rel}.{}.jsonl", ulid()));
     Ok(q)
 }

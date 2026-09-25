@@ -58,8 +58,16 @@ fn doctor_quarantines_a_broken_line() {
     let d = repo();
     let (ok, _, err) = fael(&d, &["add", "decision", "keep me", "--files", "src/a.rs"]);
     assert!(ok, "{err}");
-    let wdir = std::fs::read_dir(d.join(".fael/log")).unwrap().next().unwrap().unwrap().path();
-    let log: Vec<PathBuf> = std::fs::read_dir(&wdir).unwrap().map(|e| e.unwrap().path()).collect();
+    let wdir = std::fs::read_dir(d.join(".fael/log"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let log: Vec<PathBuf> = std::fs::read_dir(&wdir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
     assert_eq!(log.len(), 1);
     let mut s = std::fs::read_to_string(&log[0]).unwrap();
     s.push_str("not json\n");
@@ -68,7 +76,9 @@ fn doctor_quarantines_a_broken_line() {
     assert!(!ok);
     let (ok, out, _) = fael(&d, &["doctor", "--fix", "--json"]);
     assert!(ok, "{out}");
-    let q: Vec<_> = std::fs::read_dir(d.join(".fael/quarantine")).unwrap().collect();
+    let q: Vec<_> = std::fs::read_dir(d.join(".fael/quarantine"))
+        .unwrap()
+        .collect();
     assert_eq!(q.len(), 1);
     let (_, out, _) = fael(&d, &["find", "--all"]);
     assert!(out.contains("keep me"), "{out}");
@@ -80,12 +90,27 @@ fn compact_round_trip_through_cli() {
     let (ok, _, err) = fael(&d, &["add", "note", "current row", "--files", "src/a.rs"]);
     assert!(ok, "{err}");
     // a past month with a close, written by hand (the CLI only writes this month)
-    let by = std::fs::read_dir(d.join(".fael/log")).unwrap().next().unwrap().unwrap().file_name();
+    let by = std::fs::read_dir(d.join(".fael/log"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .file_name();
     let dir = d.join(".fael/log").join(by);
     let row = |id: &str, text: &str| {
-        format!(r#"{{"v":1,"id":"{id}","ts":"2000-01-01T00:00:00.000Z","by":"test-user-","kind":"decision","text":"{text}","files":["old.rs"]}}"#)
+        format!(
+            r#"{{"v":1,"id":"{id}","ts":"2000-01-01T00:00:00.000Z","by":"test-user-","kind":"decision","text":"{text}","files":["old.rs"]}}"#
+        )
     };
-    std::fs::write(dir.join("2000-01.jsonl"), format!("{}\n{}\n", row("A0000000000000000000000001", "old one"), row("A0000000000000000000000002", "old two"))).unwrap();
+    std::fs::write(
+        dir.join("2000-01.jsonl"),
+        format!(
+            "{}\n{}\n",
+            row("A0000000000000000000000001", "old one"),
+            row("A0000000000000000000000002", "old two")
+        ),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("2000-01.close.jsonl"),
         "{\"v\":1,\"id\":\"C0000000000000000000000001\",\"ts\":\"2000-01-02T00:00:00.000Z\",\"by\":\"test-user-\",\"ref\":\"A0000000000000000000000001\",\"text\":\"done\"}\n",
@@ -96,9 +121,15 @@ fn compact_round_trip_through_cli() {
     assert!(out.contains("1 close(s) folded"), "{out}");
     assert!(!dir.join("2000-01.jsonl").exists());
     let (_, out, _) = fael(&d, &["find", "--all"]);
-    assert!(out.contains("old one") && out.contains("old two") && out.contains("current row"), "{out}");
+    assert!(
+        out.contains("old one") && out.contains("old two") && out.contains("current row"),
+        "{out}"
+    );
     let (_, out, _) = fael(&d, &["find"]);
-    assert!(!out.contains("old one") && out.contains("current row"), "{out}"); // folded close hides by default
+    assert!(
+        !out.contains("old one") && out.contains("current row"),
+        "{out}"
+    ); // folded close hides by default
 }
 
 #[test]

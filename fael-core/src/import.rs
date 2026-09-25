@@ -74,7 +74,10 @@ pub fn import(fael: &Path, src: &Path, allowed: &[String], opts: &Opts) -> Resul
             "{}: no rows to import ({} line(s) skipped{})",
             src.display(),
             skipped,
-            warnings.first().map(|w| format!(" — first: {w}")).unwrap_or_default()
+            warnings
+                .first()
+                .map(|w| format!(" — first: {w}"))
+                .unwrap_or_default()
         ));
     }
     dedupe_ids(&mut adds);
@@ -82,7 +85,10 @@ pub fn import(fael: &Path, src: &Path, allowed: &[String], opts: &Opts) -> Resul
     let folded = fold(&mut adds, &closes);
     let resolved: std::collections::HashSet<&str> =
         folded.iter().map(|(_, c)| c.id.as_str()).collect();
-    let carried: Vec<Row> = closes.into_iter().filter(|c| !resolved.contains(c.id.as_str())).collect();
+    let carried: Vec<Row> = closes
+        .into_iter()
+        .filter(|c| !resolved.contains(c.id.as_str()))
+        .collect();
 
     let dir = fael.join("log").join("_import");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -124,10 +130,17 @@ fn sources(src: &Path) -> Result<Vec<PathBuf>, String> {
         return Ok(vec![src.to_path_buf()]);
     }
     if !src.is_dir() {
-        return Err(format!("rejected: {} is not a file or directory", src.display()));
+        return Err(format!(
+            "rejected: {} is not a file or directory",
+            src.display()
+        ));
     }
     let nested = src.join(".fael/log");
-    let dir = if nested.is_dir() { nested } else { src.to_path_buf() };
+    let dir = if nested.is_dir() {
+        nested
+    } else {
+        src.to_path_buf()
+    };
     let files: Vec<PathBuf> = collect_files(&dir)
         .into_iter()
         .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
@@ -146,7 +159,12 @@ enum Converted {
 /// One source line → a fael row. Fapony-shaped lines (an `agent` field, no
 /// `by`) go through the legacy mapping; fael-shaped lines pass through with
 /// `--map` applied. Anything unparseable is an `Err` the caller counts.
-fn convert(line: &str, is_close_file: bool, allowed: &[String], opts: &Opts) -> Result<Converted, String> {
+fn convert(
+    line: &str,
+    is_close_file: bool,
+    allowed: &[String],
+    opts: &Opts,
+) -> Result<Converted, String> {
     let v: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
     let Value::Object(mut m) = v else {
         return Err("not a JSON object".into());
@@ -154,12 +172,20 @@ fn convert(line: &str, is_close_file: bool, allowed: &[String], opts: &Opts) -> 
     if m.contains_key("agent") && !m.contains_key("by") {
         return legacy(m, line, allowed, opts);
     }
-    if m.get("id").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+    if m.get("id")
+        .and_then(Value::as_str)
+        .is_none_or(|s| s.is_empty())
+    {
         m.insert("id".into(), Value::String(legacy_id(line)));
     }
     let mut row: Row = serde_json::from_value(Value::Object(m)).map_err(|e| e.to_string())?;
     apply_maps(&mut row.files, opts);
-    if is_close_file || row.reference.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+    if is_close_file
+        || row
+            .reference
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+    {
         Ok(Converted::Close(row))
     } else {
         Ok(Converted::Add(row))
@@ -167,10 +193,29 @@ fn convert(line: &str, is_close_file: bool, allowed: &[String], opts: &Opts) -> 
 }
 
 /// A fapony row → a fael row, per the mapping in the module docs.
-fn legacy(mut m: Map<String, Value>, line: &str, allowed: &[String], opts: &Opts) -> Result<Converted, String> {
-    let id = m.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| legacy_id(line));
-    let by = m.get("agent").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| "legacy".into());
-    let kind = m.get("kind").and_then(Value::as_str).unwrap_or("note").to_string();
+fn legacy(
+    mut m: Map<String, Value>,
+    line: &str,
+    allowed: &[String],
+    opts: &Opts,
+) -> Result<Converted, String> {
+    let id = m
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| legacy_id(line));
+    let by = m
+        .get("agent")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "legacy".into());
+    let kind = m
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("note")
+        .to_string();
     m.remove("agent");
     m.insert("v".into(), Value::from(1));
     m.insert("id".into(), Value::String(id));

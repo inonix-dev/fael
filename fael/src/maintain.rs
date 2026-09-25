@@ -116,11 +116,15 @@ pub fn compact(a: &Args) -> Result<ExitCode, String> {
 fn valid_month(b: &str) -> Result<(), String> {
     let ok = b.len() == 7
         && b.as_bytes()[4] == b'-'
-        && b.bytes().enumerate().all(|(i, c)| i == 4 || c.is_ascii_digit());
+        && b.bytes()
+            .enumerate()
+            .all(|(i, c)| i == 4 || c.is_ascii_digit());
     if ok {
         Ok(())
     } else {
-        Err(format!("rejected: --before {b:?} is not yyyy-mm (e.g. 2026-08)"))
+        Err(format!(
+            "rejected: --before {b:?} is not yyyy-mm (e.g. 2026-08)"
+        ))
     }
 }
 
@@ -153,12 +157,7 @@ pub fn import(a: &Args, src: &str) -> Result<ExitCode, String> {
         let paths = rep
             .paths
             .iter()
-            .map(|p| {
-                p.strip_prefix(&r.root)
-                    .unwrap_or(p)
-                    .display()
-                    .to_string()
-            })
+            .map(|p| p.strip_prefix(&r.root).unwrap_or(p).display().to_string())
             .collect::<Vec<_>>()
             .join(", ");
         println!(

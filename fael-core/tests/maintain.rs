@@ -40,7 +40,10 @@ fn row(id: &str, kind: &str, files: &[&str]) -> Row {
 fn month_file(fael: &Path, writer: &str, month: &str, close: bool) -> PathBuf {
     let dir = fael.join("log").join(writer);
     fs::create_dir_all(&dir).unwrap();
-    dir.join(format!("{month}{}.jsonl", if close { ".close" } else { "" }))
+    dir.join(format!(
+        "{month}{}.jsonl",
+        if close { ".close" } else { "" }
+    ))
 }
 
 fn write_lines(path: &Path, lines: &[String]) {
@@ -52,7 +55,10 @@ fn write_lines(path: &Path, lines: &[String]) {
 }
 
 fn kinds(rep: &DoctorReport) -> Vec<(ProblemKind, Severity)> {
-    rep.problems.iter().map(|p| (p.kind.clone(), p.severity)).collect()
+    rep.problems
+        .iter()
+        .map(|p| (p.kind.clone(), p.severity))
+        .collect()
 }
 
 // --- doctor: scan ---
@@ -91,8 +97,14 @@ fn missing_union_and_ignored() {
     );
     let rep = doctor_scan(&fael, &r, true, MONTH);
     let ks = kinds(&rep);
-    assert!(ks.contains(&(ProblemKind::Union, Severity::Error)), "{ks:?}");
-    assert!(ks.contains(&(ProblemKind::Ignored, Severity::Error)), "{ks:?}");
+    assert!(
+        ks.contains(&(ProblemKind::Union, Severity::Error)),
+        "{ks:?}"
+    );
+    assert!(
+        ks.contains(&(ProblemKind::Ignored, Severity::Error)),
+        "{ks:?}"
+    );
 }
 
 // --- doctor: --fix content repairs ---
@@ -115,15 +127,30 @@ fn broken_lines_move_to_quarantine_never_deleted() {
     );
     write_lines(&p, &[a.clone(), "not json".into(), b.clone()]);
     let (before, done, after) = scan_fix_rescan(&fael, &r);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Broken && x.fixable), "{before:?}");
-    assert!(done.iter().any(|d| d.contains("1 line(s) to quarantine")), "{done:?}");
+    assert!(
+        before
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Broken && x.fixable),
+        "{before:?}"
+    );
+    assert!(
+        done.iter().any(|d| d.contains("1 line(s) to quarantine")),
+        "{done:?}"
+    );
     // the byte survived — in quarantine, not in the log
-    let q: Vec<PathBuf> = fs::read_dir(fael.join("quarantine")).unwrap().map(|e| e.unwrap().path()).collect();
+    let q: Vec<PathBuf> = fs::read_dir(fael.join("quarantine"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
     assert_eq!(q.len(), 1);
     assert!(fs::read_to_string(&q[0]).unwrap().contains("not json"));
     assert!(!fs::read_to_string(&p).unwrap().contains("not json"));
     assert_eq!(read(&fael).rows.len(), 2);
-    assert!(after.problems.iter().all(|x| x.kind != ProblemKind::Broken), "{after:?}");
+    assert!(
+        after.problems.iter().all(|x| x.kind != ProblemKind::Broken),
+        "{after:?}"
+    );
 }
 
 #[test]
@@ -134,9 +161,15 @@ fn torn_tail_moves_to_quarantine() {
     let good = row("A0000000000000000000000001", "note", &["a.rs"]).to_line();
     fs::write(&p, format!("{good}\n{{\"v\":1,\"id\":\"TOR")).unwrap();
     let (before, _, after) = scan_fix_rescan(&fael, &r);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Torn), "{before:?}");
+    assert!(
+        before.problems.iter().any(|x| x.kind == ProblemKind::Torn),
+        "{before:?}"
+    );
     assert_eq!(read(&fael).rows.len(), 1);
-    assert!(after.problems.iter().all(|x| x.kind != ProblemKind::Torn), "{after:?}");
+    assert!(
+        after.problems.iter().all(|x| x.kind != ProblemKind::Torn),
+        "{after:?}"
+    );
     assert!(fs::read(&p).unwrap().ends_with(b"\n"));
 }
 
@@ -149,14 +182,38 @@ fn conflict_markers_stripped_both_sides_kept() {
         row("A0000000000000000000000001", "note", &["a.rs"]).to_line(),
         row("A0000000000000000000000002", "note", &["b.rs"]).to_line(),
     );
-    write_lines(&p, &[a.clone(), "<<<<<<< HEAD".into(), b.clone(), "=======".into(), ">>>>>>> dev".into()]);
+    write_lines(
+        &p,
+        &[
+            a.clone(),
+            "<<<<<<< HEAD".into(),
+            b.clone(),
+            "=======".into(),
+            ">>>>>>> dev".into(),
+        ],
+    );
     let (before, done, after) = scan_fix_rescan(&fael, &r);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Conflict), "{before:?}");
-    assert!(done.iter().any(|d| d.contains("3 marker(s) stripped")), "{done:?}");
+    assert!(
+        before
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Conflict),
+        "{before:?}"
+    );
+    assert!(
+        done.iter().any(|d| d.contains("3 marker(s) stripped")),
+        "{done:?}"
+    );
     let body = fs::read_to_string(&p).unwrap();
     assert!(!body.contains("<<<<<<<") && body.contains(&a) && body.contains(&b));
     assert_eq!(read(&fael).rows.len(), 2);
-    assert!(after.problems.iter().all(|x| x.kind == ProblemKind::Conflict), "{after:?}");
+    assert!(
+        after
+            .problems
+            .iter()
+            .all(|x| x.kind == ProblemKind::Conflict),
+        "{after:?}"
+    );
 }
 
 #[test]
@@ -169,11 +226,23 @@ fn bom_and_crlf_normalised() {
     raw.extend_from_slice(format!("{line}\r\n").as_bytes());
     fs::write(&p, raw).unwrap();
     let (before, _, after) = scan_fix_rescan(&fael, &r);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Encoding), "{before:?}");
+    assert!(
+        before
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Encoding),
+        "{before:?}"
+    );
     let fixed = fs::read(&p).unwrap();
     assert!(!fixed.starts_with(b"\xef\xbb\xbf") && !fixed.contains(&b'\r'));
     assert_eq!(read(&fael).rows.len(), 1);
-    assert!(after.problems.iter().all(|x| x.kind == ProblemKind::Encoding), "{after:?}");
+    assert!(
+        after
+            .problems
+            .iter()
+            .all(|x| x.kind == ProblemKind::Encoding),
+        "{after:?}"
+    );
 }
 
 #[test]
@@ -181,13 +250,25 @@ fn duplicates_are_report_only() {
     let r = root();
     let fael = fael_of(&r);
     let line = row("A0000000000000000000000001", "note", &["a.rs"]).to_line();
-    write_lines(&month_file(&fael, "tester-0000", "2026-07", false), std::slice::from_ref(&line));
+    write_lines(
+        &month_file(&fael, "tester-0000", "2026-07", false),
+        std::slice::from_ref(&line),
+    );
     write_lines(&month_file(&fael, "other-0000", "2026-07", false), &[line]);
     let (before, _, after) = scan_fix_rescan(&fael, &r);
-    let dupe = before.problems.iter().find(|x| x.kind == ProblemKind::Duplicate).unwrap();
+    let dupe = before
+        .problems
+        .iter()
+        .find(|x| x.kind == ProblemKind::Duplicate)
+        .unwrap();
     assert!(!dupe.fixable);
     assert_eq!(read(&fael).rows.len(), 1); // read dedupes first-wins
-    assert!(after.problems.iter().any(|x| x.kind == ProblemKind::Duplicate));
+    assert!(
+        after
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Duplicate)
+    );
 }
 
 #[test]
@@ -196,11 +277,29 @@ fn rows_without_files_and_future_month_are_notes() {
     let fael = fael_of(&r);
     let mut legacy = row("legacy-1a2b3c4d", "note", &[]);
     legacy.files = vec![];
-    write_lines(&month_file(&fael, "tester-0000", "2026-07", false), &[legacy.to_line()]);
-    write_lines(&month_file(&fael, "tester-0000", "2999-01", false), &[row("A0000000000000000000000009", "note", &["a.rs"]).to_line()]);
+    write_lines(
+        &month_file(&fael, "tester-0000", "2026-07", false),
+        &[legacy.to_line()],
+    );
+    write_lines(
+        &month_file(&fael, "tester-0000", "2999-01", false),
+        &[row("A0000000000000000000000009", "note", &["a.rs"]).to_line()],
+    );
     let (before, done, _) = scan_fix_rescan(&fael, &r);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::NoFiles && x.severity == Severity::Info), "{before:?}");
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Future), "{before:?}");
+    assert!(
+        before
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::NoFiles && x.severity == Severity::Info),
+        "{before:?}"
+    );
+    assert!(
+        before
+            .problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Future),
+        "{before:?}"
+    );
     assert!(done.is_empty(), "nothing fixable here: {done:?}");
     assert_eq!(read(&fael).rows.len(), 2); // legacy row still read
 }
@@ -214,11 +313,21 @@ fn missing_union_line_is_added() {
         &[row("A0000000000000000000000001", "note", &["a.rs"]).to_line()],
     );
     let before = doctor_scan(&fael, &r, false, MONTH);
-    assert!(before.problems.iter().any(|x| x.kind == ProblemKind::Union), "{before:?}");
+    assert!(
+        before.problems.iter().any(|x| x.kind == ProblemKind::Union),
+        "{before:?}"
+    );
     doctor_fix(&fael, &r, &before).unwrap();
-    assert!(fs::read_to_string(r.join(".gitattributes")).unwrap().contains(".fael/log/**/*.jsonl merge=union"));
+    assert!(
+        fs::read_to_string(r.join(".gitattributes"))
+            .unwrap()
+            .contains(".fael/log/**/*.jsonl merge=union")
+    );
     let after = doctor_scan(&fael, &r, false, MONTH);
-    assert!(after.problems.iter().all(|x| x.kind != ProblemKind::Union), "{after:?}");
+    assert!(
+        after.problems.iter().all(|x| x.kind != ProblemKind::Union),
+        "{after:?}"
+    );
 }
 
 #[test]
@@ -229,7 +338,11 @@ fn several_fael_dirs_are_reported() {
     fs::create_dir_all(&sub).unwrap();
     fs::write(sub.join("2026-07.jsonl"), "{}\n").unwrap();
     let rep = doctor_scan(&fael, &r, false, MONTH);
-    let m = rep.problems.iter().find(|x| x.kind == ProblemKind::MultiFael).unwrap();
+    let m = rep
+        .problems
+        .iter()
+        .find(|x| x.kind == ProblemKind::MultiFael)
+        .unwrap();
     assert!(m.detail.contains("sub/.fael"), "{}", m.detail);
 }
 
@@ -238,16 +351,32 @@ fn oversize_month_is_an_error() {
     let r = root();
     let fael = fael_of(&r);
     let p = month_file(&fael, "tester-0000", "2026-07", false);
-    write_lines(&p, &[row("A0000000000000000000000001", "note", &["a.rs"]).to_line()]);
-    fs::OpenOptions::new().write(true).open(&p).unwrap().set_len(MONTH_MAX).unwrap();
+    write_lines(
+        &p,
+        &[row("A0000000000000000000000001", "note", &["a.rs"]).to_line()],
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_len(MONTH_MAX)
+        .unwrap();
     let rep = doctor_scan(&fael, &r, false, MONTH);
-    assert!(rep.problems.iter().any(|x| x.kind == ProblemKind::Oversize && !x.fixable), "{rep:?}");
+    assert!(
+        rep.problems
+            .iter()
+            .any(|x| x.kind == ProblemKind::Oversize && !x.fixable),
+        "{rep:?}"
+    );
 }
 
 // --- compact ---
 
 fn compact_month(fael: &Path, writer: &str, month: &str, ids: &[&str], closes: &[(&str, &str)]) {
-    let lines: Vec<String> = ids.iter().map(|id| row(id, "note", &["a.rs"]).to_line()).collect();
+    let lines: Vec<String> = ids
+        .iter()
+        .map(|id| row(id, "note", &["a.rs"]).to_line())
+        .collect();
     write_lines(&month_file(fael, writer, month, false), &lines);
     let clines: Vec<String> = closes
         .iter()
@@ -272,7 +401,13 @@ fn compact_folds_sorts_and_deletes_past_months() {
         &["A0000000000000000000000002", "A0000000000000000000000001"],
         &[("C0000000000000000000000001", "A0000000000000000000000001")],
     );
-    compact_month(&fael, "tester-0000", "2026-08", &["A0000000000000000000000003"], &[]);
+    compact_month(
+        &fael,
+        "tester-0000",
+        "2026-08",
+        &["A0000000000000000000000003"],
+        &[],
+    );
     write_lines(
         &month_file(&fael, "tester-0000", "2026-09", false),
         &[row("A0000000000000000000000004", "note", &["a.rs"]).to_line()],
@@ -289,13 +424,25 @@ fn compact_folds_sorts_and_deletes_past_months() {
         .unwrap()
         .map(|e| e.unwrap().path())
         .collect();
-    assert_eq!(found.iter().filter(|p| p.to_string_lossy().contains("compact.")).count(), 1);
+    assert_eq!(
+        found
+            .iter()
+            .filter(|p| p.to_string_lossy().contains("compact."))
+            .count(),
+        1
+    );
     let log = read(&fael);
     assert_eq!(log.rows.len(), 4); // 3 compacted + 1 current
     assert!(closed(&log).contains("A0000000000000000000000001"));
-    let gone: Vec<String> = find(&log, &Filter::default()).iter().map(|x| x.id.clone()).collect();
+    let gone: Vec<String> = find(&log, &Filter::default())
+        .iter()
+        .map(|x| x.id.clone())
+        .collect();
     assert!(!gone.contains(&"A0000000000000000000000001".to_string())); // hidden by default
-    let all = Filter { all: true, ..Filter::default() };
+    let all = Filter {
+        all: true,
+        ..Filter::default()
+    };
     let shown = find(&log, &all);
     assert!(shown.iter().any(|x| x.id == "A0000000000000000000000001"));
 }
@@ -316,17 +463,48 @@ fn compact_nothing_eligible_is_an_error() {
 fn compact_before_and_writer_filter() {
     let r = root();
     let fael = fael_of(&r);
-    compact_month(&fael, "a-0000", "2026-07", &["A0000000000000000000000001"], &[]);
-    compact_month(&fael, "a-0000", "2026-08", &["A0000000000000000000000002"], &[]);
-    compact_month(&fael, "b-0000", "2026-07", &["A0000000000000000000000003"], &[]);
-    let rep = compact(&fael, &r, &CompactOpts { before: Some("2026-08".into()), ..CompactOpts::default() }, MONTH).unwrap();
+    compact_month(
+        &fael,
+        "a-0000",
+        "2026-07",
+        &["A0000000000000000000000001"],
+        &[],
+    );
+    compact_month(
+        &fael,
+        "a-0000",
+        "2026-08",
+        &["A0000000000000000000000002"],
+        &[],
+    );
+    compact_month(
+        &fael,
+        "b-0000",
+        "2026-07",
+        &["A0000000000000000000000003"],
+        &[],
+    );
+    let rep = compact(
+        &fael,
+        &r,
+        &CompactOpts {
+            before: Some("2026-08".into()),
+            ..CompactOpts::default()
+        },
+        MONTH,
+    )
+    .unwrap();
     assert_eq!(rep.writers.len(), 2); // 07 of both writers, 08 untouched
     assert!(rep.writers.iter().all(|w| w.rows == 1));
     assert!(month_file(&fael, "a-0000", "2026-08", false).exists());
     let rep = compact(
         &fael,
         &r,
-        &CompactOpts { writer: Some("a-0000".into()), before: Some("2099-01".into()), ..CompactOpts::default() },
+        &CompactOpts {
+            writer: Some("a-0000".into()),
+            before: Some("2099-01".into()),
+            ..CompactOpts::default()
+        },
         "2099-02",
     )
     .unwrap();
@@ -365,11 +543,25 @@ fn compact_prune_drops_only_closed_rows_whose_files_are_all_gone() {
         &month_file(&fael, "tester-0000", "2026-07", true),
         &[c1.to_line(), c2.to_line(), c4.to_line(), c5.to_line()],
     );
-    let rep = compact(&fael, &r, &CompactOpts { prune: true, ..CompactOpts::default() }, MONTH).unwrap();
+    let rep = compact(
+        &fael,
+        &r,
+        &CompactOpts {
+            prune: true,
+            ..CompactOpts::default()
+        },
+        MONTH,
+    )
+    .unwrap();
     assert_eq!(rep.writers[0].pruned, 1); // only the closed gone.rs row
     let ids: Vec<String> = read(&fael).rows.iter().map(|x| x.id.clone()).collect();
     assert!(!ids.contains(&"A0000000000000000000000001".to_string()));
-    for id in ["A0000000000000000000000002", "A0000000000000000000000003", "A0000000000000000000000004", "A0000000000000000000000005"] {
+    for id in [
+        "A0000000000000000000000002",
+        "A0000000000000000000000003",
+        "A0000000000000000000000004",
+        "A0000000000000000000000005",
+    ] {
         assert!(ids.contains(&id.to_string()), "{ids:?}");
     }
 }
@@ -380,7 +572,10 @@ fn compact_refuses_dirty_sources() {
     let fael = fael_of(&r);
     write_lines(
         &month_file(&fael, "tester-0000", "2026-07", false),
-        &[row("A0000000000000000000000001", "note", &["a.rs"]).to_line(), "broken".into()],
+        &[
+            row("A0000000000000000000000001", "note", &["a.rs"]).to_line(),
+            "broken".into(),
+        ],
     );
     let e = compact(&fael, &r, &CompactOpts::default(), MONTH).unwrap_err();
     assert!(e.contains("doctor --fix"), "{e}");
@@ -431,7 +626,11 @@ fn fapony_legacy_mapping() {
     ];
     fs::write(src.join("log.delamind.jsonl"), lines.join("\n") + "\n").unwrap();
     let rep = import(&fael, &src, &[], &ImportOpts::default()).unwrap();
-    assert_eq!((rep.adds, rep.folded, rep.carried, rep.skipped), (6, 1, 1, 0), "{rep:?}");
+    assert_eq!(
+        (rep.adds, rep.folded, rep.carried, rep.skipped),
+        (6, 1, 1, 0),
+        "{rep:?}"
+    );
     assert_eq!(rep.paths.len(), 2); // .jsonl + .close.jsonl companion
     let log = read(&fael);
     let by_id = |id: &str| log.rows.iter().find(|x| x.id == id).unwrap().clone();
@@ -439,11 +638,18 @@ fn fapony_legacy_mapping() {
     assert_eq!(by_id("muft0002").kind, "issue");
     let n = by_id("muft0003");
     assert_eq!(n.kind, "note");
-    assert_eq!(n.extra.get("legacy_kind").and_then(|v| v.as_str()), Some("next"));
+    assert_eq!(
+        n.extra.get("legacy_kind").and_then(|v| v.as_str()),
+        Some("next")
+    );
     assert!(closed(&log).contains("muft0001")); // the close folded in
     assert!(by_id("muft0001").extra.contains_key("closed"));
     assert_eq!(log.closes.len(), 1); // the unresolvable close rides the companion
-    let noid = log.rows.iter().find(|x| x.id.starts_with("legacy-")).unwrap();
+    let noid = log
+        .rows
+        .iter()
+        .find(|x| x.id.starts_with("legacy-"))
+        .unwrap();
     assert_eq!(noid.text, "no id here");
     let nofiles = by_id("muft0007");
     assert!(nofiles.files.is_empty()); // kept as-is, read-valid
@@ -469,7 +675,9 @@ fn import_map_rewrites_prefixes_not_anchors() {
         &fael,
         &src,
         &[],
-        &ImportOpts { maps: vec![("old/".into(), "new/".into())] },
+        &ImportOpts {
+            maps: vec![("old/".into(), "new/".into())],
+        },
     )
     .unwrap();
     assert_eq!(rep.adds, 1);
@@ -484,7 +692,11 @@ fn import_native_fael_log() {
     let other = tmp().join("other").join(".fael").join("log");
     fs::create_dir_all(other.join("w-0000")).unwrap();
     let line = row("A0000000000000000000000001", "decision", &["x.rs"]).to_line();
-    fs::write(other.join("w-0000").join("2026-01.jsonl"), line.clone() + "\n").unwrap();
+    fs::write(
+        other.join("w-0000").join("2026-01.jsonl"),
+        line.clone() + "\n",
+    )
+    .unwrap();
     let rep = import(&fael, &other, &[], &ImportOpts::default()).unwrap();
     assert_eq!((rep.adds, rep.skipped), (1, 0));
     assert_eq!(read(&fael).rows.len(), 1);
@@ -498,7 +710,13 @@ fn import_350_legacy_rows_drops_nothing() {
     fs::create_dir_all(&src).unwrap();
     let mut lines = vec![];
     for i in 0..350 {
-        let kind = if i % 10 == 0 { "bug" } else if i % 15 == 0 { "next" } else { "note" };
+        let kind = if i % 10 == 0 {
+            "bug"
+        } else if i % 15 == 0 {
+            "next"
+        } else {
+            "note"
+        };
         if i % 70 == 0 {
             lines.push(format!(
                 r#"{{"ts":"2026-01-01T00:00:00Z","agent":"w","kind":"{kind}","text":"row {i}","files":["f{i}.rs"],"v":2}}"#

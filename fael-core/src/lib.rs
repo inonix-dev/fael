@@ -12,7 +12,10 @@ mod query;
 pub use compact::{Opts as CompactOpts, Report as CompactReport, WriterReport, compact};
 pub use import::{Opts as ImportOpts, Report as ImportReport, import};
 
-pub use doctor::{Kind as ProblemKind, Problem, Report as DoctorReport, Severity, current_month, fix as doctor_fix, scan as doctor_scan};
+pub use doctor::{
+    Kind as ProblemKind, Problem, Report as DoctorReport, Severity, current_month,
+    fix as doctor_fix, scan as doctor_scan,
+};
 
 pub use hook::{StopFacts, decide_stop, last_row_ms};
 

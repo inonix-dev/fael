@@ -22,7 +22,9 @@ pub(crate) fn collect_files(dir: &Path) -> Vec<PathBuf> {
 /// A leftover merge-conflict marker line — skipped on read (both sides' rows
 /// kept), stripped by `doctor --fix`.
 pub(crate) fn is_marker(line: &str) -> bool {
-    ["<<<<<<<", "=======", ">>>>>>>", "|||||||"].iter().any(|m| line.starts_with(m))
+    ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
+        .iter()
+        .any(|m| line.starts_with(m))
 }
 
 /// Everything under `.fael/log/`, deduped by id (first by file order wins).
@@ -112,7 +114,10 @@ pub(crate) fn month_of(path: &Path) -> Option<String> {
         .unwrap_or(name.strip_suffix(".jsonl")?);
     let ok = stem.len() == 7
         && stem.as_bytes()[4] == b'-'
-        && stem.bytes().enumerate().all(|(i, c)| i == 4 || c.is_ascii_digit());
+        && stem
+            .bytes()
+            .enumerate()
+            .all(|(i, c)| i == 4 || c.is_ascii_digit());
     ok.then(|| stem.to_string())
 }
 
@@ -133,7 +138,10 @@ pub(crate) fn lock(fael: &Path) -> Result<std::fs::File, String> {
 /// Write-then-rename in the same directory (atomic on POSIX/NTFS).
 pub(crate) fn tmp_rename(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use crate::ulid;
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let tmp = dir.join(format!(".fael-tmp-{}", ulid()));
     std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))?;

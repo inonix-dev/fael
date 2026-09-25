@@ -55,12 +55,18 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
         if m.as_str() >= month {
             continue; // the current month (and any clock-skew future one) stays append-only
         }
-        if opts.before.as_ref().is_some_and(|b| m.as_str() >= b.as_str()) {
+        if opts
+            .before
+            .as_ref()
+            .is_some_and(|b| m.as_str() >= b.as_str())
+        {
             continue;
         }
         let rel = f.strip_prefix(&log).map_err(|e| e.to_string())?;
         let mut parts = rel.components();
-        let (Some(w), Some(_)) = (parts.next(), parts.next()) else { continue };
+        let (Some(w), Some(_)) = (parts.next(), parts.next()) else {
+            continue;
+        };
         if parts.next().is_some() {
             continue; // only direct children of a writer folder
         }
@@ -74,7 +80,9 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
         by_writer.entry(writer).or_default().push(f);
     }
     if by_writer.is_empty() {
-        return Err("fael: no past months to compact — month files older than the current one".into());
+        return Err(
+            "fael: no past months to compact — month files older than the current one".into(),
+        );
     }
     let mut writers: Vec<String> = by_writer.keys().cloned().collect();
     writers.sort();
@@ -87,8 +95,15 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
         let folded = fold(&mut rows, &closes);
         // closes that resolved are gone; the rest ride along untouched
         let resolved: HashSet<&str> = folded.iter().map(|(_, c)| c.id.as_str()).collect();
-        let carried: Vec<Row> = closes.into_iter().filter(|c| !resolved.contains(c.id.as_str())).collect();
-        let pruned = if opts.prune { prune(&mut rows, root) } else { 0 };
+        let carried: Vec<Row> = closes
+            .into_iter()
+            .filter(|c| !resolved.contains(c.id.as_str()))
+            .collect();
+        let pruned = if opts.prune {
+            prune(&mut rows, root)
+        } else {
+            0
+        };
         rows.sort_by(|a, b| a.id.cmp(&b.id));
         let stamp = ulid();
         let dir = log.join(&writer);
@@ -106,7 +121,10 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
                 cbody.push_str(&c.to_line());
                 cbody.push('\n');
             }
-            tmp_rename(&dir.join(format!("compact.{stamp}.close.jsonl")), cbody.as_bytes())?;
+            tmp_rename(
+                &dir.join(format!("compact.{stamp}.close.jsonl")),
+                cbody.as_bytes(),
+            )?;
         }
         let mut deleted = vec![];
         for f in files {
@@ -157,12 +175,15 @@ fn load(files: &[PathBuf]) -> Result<(Vec<Row>, Vec<Row>), String> {
 pub(crate) fn fold(rows: &mut [Row], closes: &[Row]) -> Vec<(String, Row)> {
     let mut done = vec![];
     for c in closes {
-        let Some(target) = c.reference.as_deref().filter(|t| !t.trim().is_empty()) else { continue };
+        let Some(target) = c.reference.as_deref().filter(|t| !t.trim().is_empty()) else {
+            continue;
+        };
         // exact id first, else a unique prefix like `resolve`
         let mut idx = rows.iter().position(|r| r.id == *target);
         if idx.is_none() && !target.is_empty() {
             let mut pre = rows.iter().enumerate().filter(|(_, r)| {
-                r.id.get(..target.len()).is_some_and(|p| p.eq_ignore_ascii_case(target))
+                r.id.get(..target.len())
+                    .is_some_and(|p| p.eq_ignore_ascii_case(target))
             });
             idx = match (pre.next(), pre.next()) {
                 (Some((i, _)), None) => Some(i),
