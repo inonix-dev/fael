@@ -279,6 +279,10 @@ fn stop(e: &Event) -> Reply {
     if stop_blocked_before(&c.session, &root.to_string_lossy(), &kind) {
         return no();
     }
+    // the reason lands in context like any push; stats reads these back to
+    // count how many blocks were followed by a row
+    let event = if kind.starts_with("bug:") { "stop-bug" } else { "stop-work" };
+    record_usage(&c.client, event, root, &reason, &[]);
     Reply { block: true, reason: Some(reason), context: None }
 }
 
@@ -568,6 +572,8 @@ pub fn stats(json: bool) -> Result<(), String> {
     let mut by_event: HashMap<String, (usize, usize)> = HashMap::new();
     let mut by_client: HashMap<String, (usize, usize)> = HashMap::new();
     let mut by_id: HashMap<String, usize> = HashMap::new();
+    // (repo, "stop-work"|"stop-bug", ms) — checked against each repo's log below
+    let mut blocks: Vec<(String, String, i64)> = vec![];
     for line in s.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -580,6 +586,11 @@ pub fn stats(json: bool) -> Result<(), String> {
         toks += t;
         let ev = v["event"].as_str().unwrap_or("?").to_string();
         let cl = v["client"].as_str().unwrap_or("?").to_string();
+        if ev.starts_with("stop-")
+            && let (Some(repo), Some(ms)) = (v["repo"].as_str(), v["ts"].as_str().and_then(core::ts_ms))
+        {
+            blocks.push((repo.to_string(), ev.clone(), ms));
+        }
         by_event.entry(ev).and_modify(|e| { e.0 += 1; e.1 += t; }).or_insert((1, t));
         by_client.entry(cl).and_modify(|e| { e.0 += 1; e.1 += t; }).or_insert((1, t));
         for id in v["ids"].as_array().into_iter().flatten().filter_map(|i| i.as_str()) {
@@ -589,6 +600,23 @@ pub fn stats(json: bool) -> Result<(), String> {
     if n == 0 {
         println!("fael: no usage recorded yet");
         return Ok(());
+    }
+    // did a row follow each block? work: any add/close · bug: an issue row.
+    // ponytail: rows from anyone count — per-session attribution needs `session` on rows
+    let mut logs: HashMap<String, core::Log> = HashMap::new();
+    let mut outcome: HashMap<String, (usize, usize)> = HashMap::new();
+    for (repo, ev, ms) in &blocks {
+        let log = logs
+            .entry(repo.clone())
+            .or_insert_with(|| core::read(&Path::new(repo).join(".fael")));
+        let followed = if ev == "stop-bug" {
+            log.rows.iter().any(|r| r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|t| t >= *ms))
+        } else {
+            core::last_row_ms(log, *ms).is_some()
+        };
+        let e = outcome.entry(ev.clone()).or_insert((0, 0));
+        e.0 += 1;
+        e.1 += followed as usize;
     }
     if json {
         let top: Vec<_> = {
@@ -603,6 +631,7 @@ pub fn stats(json: bool) -> Result<(), String> {
                 "by_event": by_event.iter().map(|(k, (c, t))| (k.clone(), serde_json::json!({"events": c, "est_tokens": t}))).collect::<serde_json::Map<String,_>>(),
                 "by_client": by_client.iter().map(|(k, (c, t))| (k.clone(), serde_json::json!({"events": c, "est_tokens": t}))).collect::<serde_json::Map<String,_>>(),
                 "top_rows": top,
+                "stop_blocks": outcome.iter().map(|(k, (b, f))| (k.clone(), serde_json::json!({"blocks": b, "followed_by_row": f}))).collect::<serde_json::Map<String,_>>(),
             })
         );
         return Ok(());
@@ -622,6 +651,11 @@ pub fn stats(json: bool) -> Result<(), String> {
     ids.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
     for (id, c) in ids.into_iter().take(10) {
         println!("  row {id}: pushed ×{c}");
+    }
+    let mut oc: Vec<_> = outcome.iter().collect();
+    oc.sort();
+    for (k, (b, f)) in oc {
+        println!("  {k}: {b} block(s) → {f} followed by a row");
     }
     Ok(())
 }
@@ -657,6 +691,34 @@ const BUG_PHRASES_THAI: [&str; 5] = [
 
 const NEGATIONS: [&str; 7] = ["ไม่", "จะ", "ถ้า", "อาจ", "not", "no", "if"];
 
+/// Problems short of a confirmed bug — something inconsistent, or expected to
+/// break. Reporting these on the spot is the point (an agent has no reason to
+/// stay quiet), so a false fire is the accepted cost: one block per session.
+/// "might"/"อาจ" are the claim here, not a negation — only a flat denial
+/// ("no mismatch", "ไม่มีความเสี่ยง") cancels.
+const RISK_PHRASES: [&str; 18] = [
+    "inconsistent",
+    "inconsistency",
+    "mismatch",
+    "doesn't match",
+    "does not match",
+    "out of sync",
+    "might break",
+    "could break",
+    "will break",
+    "likely to break",
+    "ไม่ตรงกัน",
+    "ไม่สอดคล้อง",
+    "ขัดแย้งกัน",
+    "อาจพัง",
+    "น่าจะพัง",
+    "อาจมีปัญหา",
+    "น่าจะมีปัญหา",
+    "มีความเสี่ยง",
+];
+
+const RISK_NEGATIONS: [&str; 3] = ["ไม่", "not", "no"];
+
 /// The matched marker phrase, or `None`. Every match is checked against a
 /// negation window so "ไม่พบบั๊กใหม่ แต่เจอบั๊กที่ X" still fires on the second.
 /// The search runs on the lowercased text throughout, so byte indices always
@@ -666,16 +728,23 @@ fn has_bug_marker(text: &str) -> Option<String> {
     // phrase lists
     for p in BUG_PHRASES_LATIN.into_iter().chain(BUG_PHRASES_THAI) {
         if let Some(i) = lower.find(p)
-            && !negated(&lower, i)
+            && !negated(&lower, i, &NEGATIONS)
         {
             return Some(lower[i..i + p.len()].to_string());
+        }
+    }
+    for p in RISK_PHRASES {
+        if let Some(i) = lower.find(p)
+            && !negated(&lower, i, &RISK_NEGATIONS)
+        {
+            return Some(p.to_string());
         }
     }
     // `bug…:` — "**Bug (cause…):**" (same line, optional paren group)
     let mut from = 0;
     while let Some(i) = lower[from..].find("bug") {
         let i = from + i;
-        if word_boundary(&lower, i, 3) && colon_after(&lower, i + 3) && !negated(&lower, i) {
+        if word_boundary(&lower, i, 3) && colon_after(&lower, i + 3) && !negated(&lower, i, &NEGATIONS) {
             return Some("bug:".to_string());
         }
         from = i + 3;
@@ -715,11 +784,11 @@ fn colon_after(s: &str, mut i: usize) -> bool {
 }
 
 /// The ~15 chars before the match end in a negation word.
-fn negated(lower: &str, i: usize) -> bool {
+fn negated(lower: &str, i: usize, negations: &[&str]) -> bool {
     let before: String =
         lower[..i].chars().rev().take(15).collect::<String>().chars().rev().collect();
     let t = before.trim_end().to_lowercase();
-    NEGATIONS.iter().any(|n| {
+    negations.iter().any(|n| {
         t.ends_with(n)
             && (n.chars().all(|c| !c.is_ascii_alphabetic())
                 || t[..t.len() - n.len()].chars().last().is_none_or(|c| !c.is_alphabetic()))
@@ -795,4 +864,25 @@ fn now_rfc3339() -> Option<String> {
 fn systemtime_to_rfc3339(st: SystemTime) -> Option<String> {
     let ms = st.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_millis() as u64;
     Some(core::rfc3339(ms))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_bug_marker;
+
+    #[test]
+    fn markers_catch_bugs_and_risks_not_denials() {
+        for hit in [
+            "I found a bug in login",
+            "doc กับโค้ดไม่ตรงกัน",
+            "config and schema are out of sync",
+            "this might break the importer",
+            "ตรงนี้อาจมีปัญหาตอน merge",
+        ] {
+            assert!(has_bug_marker(hit).is_some(), "{hit}");
+        }
+        for miss in ["no bug found", "no mismatch left", "ไม่มีความเสี่ยง", "ถ้าเจอบั๊กให้บอก", "all tests pass"] {
+            assert!(has_bug_marker(miss).is_none(), "{miss}");
+        }
+    }
 }

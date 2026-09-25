@@ -41,9 +41,9 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
     {
         return Some(
             format!(
-                "This turn reported a bug (\"{marker}\") but no issue row exists for this session.\n\
-                 Record it before ending: fael add issue \"<what is broken>\" --files <files>\n\
-                 Already filed, or not a bug? End the turn again — this fires once per session."
+                "This turn reported a problem (\"{marker}\") but no issue row exists for this session.\n\
+                 Record it before ending: fael add issue \"<what is broken or at risk>\" --files <files>\n\
+                 Already filed, or not a problem? End the turn again — this fires once per session."
             ),
         );
     }

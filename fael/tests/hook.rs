@@ -181,8 +181,14 @@ fn stop_bug_signal_needs_issue_row() {
 
     // an issue row filed in this session clears it — same transcript, fresh
     // state dir, so the allow comes from the row and not from the dedupe
+    let (ok, out, _) = fael(&d, &["stats", "--json"], "");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(ok && v["stop_blocks"]["stop-bug"] == serde_json::json!({"blocks": 1, "followed_by_row": 0}), "{out}");
     let (ok, _, err) = fael(&d, &["add", "issue", "login loops", "--files", "src/a.rs"], "");
     assert!(ok, "{err}");
+    // stats sees the issue that followed the block
+    let (_, out, _) = fael(&d, &["stats"], "");
+    assert!(out.contains("stop-bug: 1 block(s) → 1 followed by a row"), "{out}");
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
     let (ok, out, _) = fael(&d, &["hook", "stop"], &input);
     assert!(ok && out.contains(r#""block":false"#), "{out}");
