@@ -176,7 +176,7 @@ client ─(stop event)─▶ core: files edited this session?
                          new row this turn? ─yes─▶ allow
                                  │no
                                  ▼
-                         block once, with a checklist of the files and the exact command to run
+                         block once, with the files as a markdown list and the exact command to run
 ```
 Edits, not commits, are the primary signal: many agents are told never to commit, and a commit-only rule never fires for them. The edit list is per-machine runtime state, never in `.fael/`. The `session` string sent with `edit` must equal the one sent with `stop`.
 

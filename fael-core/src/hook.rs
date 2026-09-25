@@ -49,14 +49,14 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
     if (f.edits.is_empty() && f.commits.is_empty()) || !f.has_log || f.new_row {
         return None;
     }
-    // a markdown checklist the agent can act on as-is, --files prefilled
+    // markdown like render(): one `- ` line per item, --files prefilled
     let (what, items, files) = if f.edits.is_empty() {
         (format!("{} commit(s)", f.commits.len()), &f.commits, "<files>".to_string())
     } else {
         (format!("{} file(s) edited", f.edits.len()), &f.edits, f.edits.join(","))
     };
     let mut out = vec![format!("{what} this session with no mem row for this work:")];
-    out.extend(items.iter().take(10).map(|c| format!("- [ ] {c}")));
+    out.extend(items.iter().take(10).map(|c| format!("- {c}")));
     if items.len() > 10 {
         out.push(format!("- … +{} more", items.len() - 10));
     }
@@ -135,7 +135,7 @@ mod tests {
             ..facts()
         })
         .unwrap();
-        assert!(r.contains("2 file(s) edited") && r.contains("- [ ] src/a.rs"), "{r}");
+        assert!(r.contains("2 file(s) edited") && r.contains("\n- src/a.rs"), "{r}");
         assert!(r.contains("--files src/a.rs,src/b.rs") && !r.contains("abc123"), "{r}");
         assert!(
             decide_stop(&StopFacts { edits: vec!["a".into()], commits: vec![], new_row: true, ..facts() })
