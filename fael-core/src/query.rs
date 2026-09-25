@@ -1,7 +1,7 @@
 //! find · brief · keys · render — what the CLI, MCP and hooks show, built on `read()`'s `Log`.
 //! Deterministic: newest first by `id` (never `ts` — clocks differ across machines).
 
-use crate::{Config, Log, Row, anchor};
+use crate::{Aliases, Config, Log, Row, anchor, is_alias_row};
 use std::collections::{HashMap, HashSet};
 
 /// What `find` narrows by. Every field is optional; `files` holds normalised refs.
@@ -75,6 +75,7 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
         .iter()
         .filter(|r| {
             !hide.contains(r.id.as_str())
+                && !is_alias_row(r)
                 && f.kind.as_ref().is_none_or(|k| &r.kind == k)
                 && f.by.as_ref().is_none_or(|b| &r.by == b)
                 && f.since.as_ref().is_none_or(|s| r.ts.as_str() >= s.as_str())
@@ -151,15 +152,19 @@ pub fn kickoff<'a>(log: &'a Log, f: &Filter, root: &std::path::Path) -> Vec<&'a 
 /// The read/edit push: rows about `files`, ranked so the most actionable comes
 /// first — exact file, then same directory, then rows sharing a key with an
 /// exact hit. Open `issue` before `decision` before the rest, newest first by
-/// `id` inside each. Closed and superseded rows never push. Deterministic: the
+/// `id` inside each. Closed and superseded rows never push. Each query expands
+/// through `al` first, so a row filed under a path that was renamed since
+/// still pushes at the new path. Deterministic: the
 /// same log and query give the same order on any machine. The caller cuts the
 /// result to the push budget with `render`.
-pub fn push<'a>(log: &'a Log, files: &[String]) -> Vec<&'a Row> {
+pub fn push<'a>(log: &'a Log, files: &[String], al: &Aliases) -> Vec<&'a Row> {
     let hide: HashSet<&str> = closed(log).union(&superseded(log)).copied().collect();
-    let queries: Vec<String> = files
-        .iter()
-        .map(|q| lenient(q).trim_end_matches('/').to_string())
-        .collect();
+    let queries: Vec<String> = al.expand_all(
+        &files
+            .iter()
+            .map(|q| lenient(q).trim_end_matches('/').to_string())
+            .collect::<Vec<_>>(),
+    );
     if queries.is_empty() {
         return vec![];
     }
@@ -190,7 +195,7 @@ pub fn push<'a>(log: &'a Log, files: &[String]) -> Vec<&'a Row> {
     let mut out: Vec<&Row> = log
         .rows
         .iter()
-        .filter(|r| !hide.contains(r.id.as_str()) && tier(r) < 3)
+        .filter(|r| !hide.contains(r.id.as_str()) && !is_alias_row(r) && tier(r) < 3)
         .collect();
     // newest first, then stable sort keeps it inside each rank
     out.sort_by(|a, b| b.id.cmp(&a.id));

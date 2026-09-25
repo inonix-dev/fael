@@ -3,6 +3,7 @@
 //! `--json` prints one JSON row per line, uncut, for programs. `fael mcp` serves the same
 //! add/close/find over stdio (see mcp.rs).
 
+mod aliases;
 mod hook;
 mod install;
 mod maintain;
@@ -290,16 +291,17 @@ fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>
 
 fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
     let r = repo()?;
+    let files = core::normalize_files(&a.files(), &r.cwd, &r.root)?;
+    let log = read(&r);
     let f = Filter {
         text: text.cloned(),
-        files: core::normalize_files(&a.files(), &r.cwd, &r.root)?,
+        files: aliases::load(&r, &log, true).expand_all(&files),
         key: a.one("key"),
         kind: a.one("kind"),
         since: a.one("since"),
         by: a.one("by"),
         all: a.has("all"),
     };
-    let log = read(&r);
     let (rows, budget) = core::query(&log, &f, &r.cfg);
     show(a, &log, &rows, budget)?;
     // --all in JSON: also the close rows naming a shown row, so a consumer can tell closed from open
@@ -315,11 +317,12 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
 
 fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
     let r = repo()?;
+    let files = core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?;
+    let log = read(&r);
     let f = Filter {
-        files: core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?,
+        files: aliases::load(&r, &log, true).expand_all(&files),
         ..Filter::default()
     };
-    let log = read(&r);
     show(
         a,
         &log,

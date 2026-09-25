@@ -3,7 +3,7 @@
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
 
-use crate::{Filter, add_row, close_row, core, read, repo};
+use crate::{Filter, add_row, aliases, close_row, core, read, repo};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -87,15 +87,16 @@ fn files(a: &Value) -> Vec<String> {
 
 fn find(a: &Value) -> Result<String, String> {
     let r = repo()?;
+    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
+    let log = read(&r);
     let f = Filter {
         text: s(a, "text"),
-        files: core::normalize_files(&files(a), &r.cwd, &r.root)?,
+        files: aliases::load(&r, &log, true).expand_all(&files),
         key: s(a, "key"),
         kind: s(a, "kind"),
         since: s(a, "since"),
         ..Filter::default()
     };
-    let log = read(&r);
     let (mut rows, budget) = core::query(&log, &f, &r.cfg);
     if let Some(n) = a["limit"].as_u64() {
         rows.truncate(n as usize);

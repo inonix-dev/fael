@@ -1,6 +1,7 @@
 //! fael-core — the log format (docs/format.md): row v1, validate, read, append under lock.
 //! Knows the row format, never a client. The CLI, MCP and hooks sit on top of this.
 
+mod aliases;
 mod compact;
 mod doctor;
 mod hook;
@@ -9,6 +10,7 @@ mod import;
 mod log;
 mod query;
 
+pub use aliases::{Aliases, is_alias_row};
 pub use compact::{Opts as CompactOpts, Report as CompactReport, WriterReport, compact};
 pub use import::{Opts as ImportOpts, Report as ImportReport, import};
 
@@ -138,6 +140,9 @@ pub struct Config {
     pub push_tokens: usize,
     /// Warn when a row's text is estimated over this many tokens.
     pub warn_row_tokens: usize,
+    /// Resolve renamed paths through the L2 alias set (`git log -M` + `fael mv`
+    /// rows). `false` returns to pre-resolver matching — the escape hatch.
+    pub resolve: bool,
 }
 
 impl Default for Config {
@@ -150,6 +155,7 @@ impl Default for Config {
             find_tokens: 800,
             push_tokens: 800,
             warn_row_tokens: 400,
+            resolve: true,
         }
     }
 }
@@ -163,6 +169,7 @@ impl Config {
         struct File {
             kinds: Vec<String>,
             key_domains: Vec<String>,
+            resolve: Option<bool>,
             budget: Budget,
             warn: Warn,
             limit: Limit,
@@ -194,6 +201,7 @@ impl Config {
             find_tokens: f.budget.find_tokens.unwrap_or(d.find_tokens),
             push_tokens: f.budget.push_tokens.unwrap_or(d.push_tokens),
             warn_row_tokens: f.warn.row_tokens.unwrap_or(d.warn_row_tokens),
+            resolve: f.resolve.unwrap_or(d.resolve),
         })
     }
 }

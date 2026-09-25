@@ -8,7 +8,7 @@
 //! The hook always exits 0. Any internal error is an empty Reply (let the
 //! turn through) — a memory tool must never break the agent's tool call.
 
-use crate::{Filter, Repo, core, git, read, repo_at};
+use crate::{Filter, Repo, aliases, core, git, read, repo_at};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
@@ -542,6 +542,9 @@ fn session_start(e: &Event) -> Reply {
         Some(c) => c,
         None => return no(),
     };
+    // once per session: pick up renames committed since the last session, so
+    // the read/edit push (which never spawns git) resolves them
+    aliases::load(&c.repo, &c.log, true);
     let rows = core::kickoff(&c.log, &Filter::default(), &c.repo.root);
     let adopted = c.repo.fael.join("log").is_dir();
     let mut context = match (rows.is_empty(), adopted) {
@@ -676,7 +679,10 @@ fn push(e: &Event, event: &str) -> Reply {
     if event == "edit" && !c.session.is_empty() && c.repo.fael.join("log").is_dir() {
         record_edits(&edits_path(&c.session, &c.repo.root), &files);
     }
-    let mut rows = core::push(&c.log, &files);
+    // the read/edit push resolves renames through the L1 cache only — no git
+    // spawn on this path (one spawn is ~9 ms against a 5 ms ceiling).
+    // `session-start` refreshes the cache once per session instead.
+    let mut rows = core::push(&c.log, &files, &aliases::load(&c.repo, &c.log, false));
     // a row already pushed this session is still in the agent's context — say it once
     let seen = (!c.session.is_empty()).then(|| seen_path(&c.session, &c.repo.root));
     if let Some(p) = &seen {

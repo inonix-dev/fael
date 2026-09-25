@@ -148,6 +148,7 @@ fn push_ranks_exact_then_dir_then_key() {
         ids(&push(
             &l,
             &f.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &Aliases::default(),
         ))
     };
     // src/a.rs: 14 exact, 13 same dir (src/c.rs); 10 closed and 11 superseded never push
@@ -157,7 +158,7 @@ fn push_ranks_exact_then_dir_then_key() {
     // anchors push only on exact ref
     assert_eq!(q(&["doc:pricing/2026"]), ["15"]);
     assert!(q(&["doc:pricing"]).is_empty());
-    assert!(push(&l, &[]).is_empty());
+    assert!(push(&l, &[], &Aliases::default()).is_empty());
 }
 
 #[test]
@@ -169,7 +170,7 @@ fn push_shares_key_with_exact_hit() {
         &["elsewhere/z.rs"],
         Some("auth:session"), // same key as the exact hit 14
     ));
-    let got: Vec<String> = push(&l, &["src/a.rs".to_string()])
+    let got: Vec<String> = push(&l, &["src/a.rs".to_string()], &Aliases::default())
         .iter()
         .map(|r| r.id[24..].to_string())
         .collect();
