@@ -61,7 +61,7 @@ pub fn ts_ms(s: &str) -> Option<i64> {
         Some(d) => (d, 0i64),
         None => {
             let i = s.rfind(['+', '-'])?;
-            if s.as_bytes().get(i - 1) == Some(&b'T') {
+            if i == 0 || s.as_bytes().get(i - 1) == Some(&b'T') {
                 return None; // the `-` of the date, not a zone
             }
             let (d, z) = s.split_at(i);
@@ -126,4 +126,13 @@ pub fn writer_id(name: &str, email: Option<&str>, host: &str) -> String {
     let seed = email.map_or_else(|| host.to_string(), str::to_lowercase);
     let h = Sha256::digest(seed.as_bytes());
     format!("{slug}-{:02x}{:02x}", h[0], h[1])
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ts_ms_leading_sign_is_none_not_panic() {
+        assert_eq!(super::ts_ms("-1"), None);
+        assert_eq!(super::ts_ms("+x"), None);
+    }
 }

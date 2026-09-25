@@ -220,10 +220,10 @@ fn stop(e: &Event) -> Reply {
     let (since, since_ms) = match e.session.as_deref() {
         // an RFC 3339 start time (neutral callers without a transcript)
         Some(s) => match core::ts_ms(s) {
-            Some(ms) => (s.to_string(), ms),
+            Some(ms) => (since_secs(ms), ms),
             None => match file_birth_ms(Path::new(s)) {
                 // a transcript file — birthtime (fallback: mtime) is the start
-                Some(ms) => (core::rfc3339(ms), ms as i64),
+                Some(ms) => (since_secs(ms as i64), ms as i64),
                 None => return no(),
             },
         },
@@ -258,6 +258,13 @@ fn stop(e: &Event) -> Reply {
         return no();
     }
     Reply { block: true, reason: Some(reason), context: None }
+}
+
+/// Floor to whole seconds for `git log --since` — flooring can only include
+/// a commit from the start second, never drop one.
+fn since_secs(ms: i64) -> String {
+    let s = core::rfc3339((ms.max(0) as u64) / 1000 * 1000);
+    s.replacen(".000Z", "Z", 1)
 }
 
 fn walk_jsonl(dir: &Path) -> impl Iterator<Item = PathBuf> {
@@ -539,12 +546,12 @@ pub fn stats(json: bool) -> Result<(), String> {
     }
     println!("fael usage ({}): {} injections · {} bytes · ~{} tokens into context", path.display(), n, bytes, toks);
     let mut ev: Vec<_> = by_event.iter().collect();
-    ev.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    ev.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     for (k, (c, t)) in ev {
         println!("  {k}: ×{c} (~{t} tokens)");
     }
     let mut cl: Vec<_> = by_client.iter().collect();
-    cl.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    cl.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     for (k, (c, t)) in cl {
         println!("  client {k}: ×{c} (~{t} tokens)");
     }
@@ -687,7 +694,8 @@ fn bug_signal_from_transcript(path: &Path, since_ms: i64) -> Option<String> {
         if m["role"] != "assistant" {
             continue;
         }
-        if let Some(created) = m["created_at"].as_str()
+        // Claude Code stamps each line at the top level, not inside `message`
+        if let Some(created) = v["timestamp"].as_str()
             && let Some(ms) = core::ts_ms(created)
             && ms < since_ms
         {
