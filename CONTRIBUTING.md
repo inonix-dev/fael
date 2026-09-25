@@ -13,6 +13,27 @@ cargo test --workspace
 Rust 1.89 or newer. The workspace has two crates: `fael-core` (log format, find, rules — no git,
 no cwd) and `fael` (CLI, MCP server, hooks, install).
 
+### Fast test loop
+
+`cargo test` runs one test binary at a time. [nextest](https://nexte.st) runs them all in
+parallel, one process per test — about 3 s for the whole workspace instead of 15 s:
+
+```bash
+cargo install cargo-nextest --locked
+cargo nextest run --workspace
+```
+
+While iterating, run only the suite or test you are touching (under a second):
+
+```bash
+cargo nextest run -p fael --test write            # one suite
+cargo nextest run -p fael -E 'test(typo)'         # tests matching a name
+```
+
+Tests that spawn the binary pass `FAEL_STATE_DIR` to the child with `Command::env`, never
+`std::env::set_var` — the env is process-global, so setting it forces every test in the
+binary behind a lock and plain `cargo test` goes serial.
+
 ## Before submitting
 
 The same checks CI runs:
