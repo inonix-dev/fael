@@ -132,14 +132,11 @@ pub(crate) fn repo() -> Result<Repo, String> {
 pub(crate) fn repo_at(cwd: &Path) -> Result<Repo, String> {
     // normalize_files is lexical, so root must be symlink-resolved like cwd
     let cwd = cwd.canonicalize().map_err(|e| format!("cwd: {e}"))?;
-    let root = git(&cwd, &["rev-parse", "--show-toplevel"])
-        .and_then(|r| PathBuf::from(r).canonicalize().ok())
-        .or_else(|| {
-            cwd.ancestors()
-                .find(|d| d.join(".fael").is_dir())
-                .map(Path::to_path_buf)
-        })
-        .unwrap_or_else(|| cwd.clone());
+    // ponytail: walk up for `.git` (dir, or file for worktree/submodule) instead
+    // of spawning `git rev-parse` — that spawn was ~13 of a hook's ~15 ms.
+    // Ignores GIT_DIR/GIT_WORK_TREE/core.worktree; spawn git if those matter.
+    let find = |name: &str| cwd.ancestors().find(|d| d.join(name).exists()).map(Path::to_path_buf);
+    let root = find(".git").or_else(|| find(".fael")).unwrap_or_else(|| cwd.clone());
     let fael = root.join(".fael");
     let cfg = config(&fael.join("config.toml"))?;
     Ok(Repo {
