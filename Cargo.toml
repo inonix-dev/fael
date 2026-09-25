@@ -5,3 +5,7 @@ resolver = "3"
 [profile.release]
 strip = true
 lto = true
+
+# cargo-dist builds with this profile
+[profile.dist]
+inherits = "release"
