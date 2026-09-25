@@ -167,14 +167,18 @@ Ranking is **deterministic**: the same log, query and budget give the same outpu
 
 **Enforce** — the agent tries to end a turn:
 ```
-client ─(stop event)─▶ core: commits this turn? ─no─▶ allow
+client ─(edit event)─▶ append file to ~/.local/state/fael/sessions/<session+worktree>.edits
+
+client ─(stop event)─▶ core: files edited this session?
+                        (none recorded → fall back to git commits since start) ─no─▶ allow
                                  │yes
                                  ▼
                          new row this turn? ─yes─▶ allow
                                  │no
                                  ▼
-                         block once, with the reason and the exact command to run
+                         block once, with a checklist of the files and the exact command to run
 ```
+Edits, not commits, are the primary signal: many agents are told never to commit, and a commit-only rule never fires for them. The edit list is per-machine runtime state, never in `.fael/`. The `session` string sent with `edit` must equal the one sent with `stop`.
 
 **Session start:**
 ```

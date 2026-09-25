@@ -118,6 +118,44 @@ fn stop_blocks_commit_without_row_then_allows() {
 }
 
 #[test]
+fn stop_blocks_edits_without_commit_or_row() {
+    // agents told never to commit: the edit hook's list is the work signal
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
+    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    assert!(ok, "{err}");
+    let t = transcript(&d, "t1.jsonl");
+    for f in ["src/a.rs", "src/b.rs"] {
+        std::fs::write(d.join(f), "//\n").unwrap();
+    }
+    for f in ["src/b.rs", "src/b.rs", "src/a.rs"] {
+        let edit = format!(
+            r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":{}}}}}"#,
+            json(&d), json(&t), json(&d.join(f))
+        );
+        assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
+    }
+    let input = format!(r#"{{"cwd":{},"transcript_path":{}}}"#, json(&d), json(&t));
+    let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
+    assert!(ok && out.contains("2 file(s) edited"), "{out}");
+    assert!(out.contains("--files src/b.rs,src/a.rs"), "{out}");
+
+    // a row for the work lets it through (fresh state dir skips the dedupe, so
+    // the edit list is gone too — re-record one edit there)
+    let (ok, _, err) = fael(&d, &["add", "note", "b.rs added", "--files", "src/b.rs"], "");
+    assert!(ok, "{err}");
+    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
+    let edit = format!(
+        r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":"src/b.rs"}}}}"#,
+        json(&d), json(&t)
+    );
+    assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
+    let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
+    assert!(ok && !out.contains("block"), "{out}");
+}
+
+#[test]
 fn stop_bug_signal_needs_issue_row() {
     let _g = lock();
     let d = repo();

@@ -21,7 +21,8 @@ struct Event {
     #[serde(default)]
     cwd: Option<String>,
     /// stop: a transcript path (birthtime = session start) or an RFC 3339
-    /// start time · read: reuse suppression is the client's job · else: dedupe key
+    /// start time · edit: send the same string as stop — it keys the session's
+    /// edit list · read: unused (reuse suppression is the client's job)
     #[serde(default)]
     session: Option<String>,
     #[serde(default)]
@@ -151,7 +152,8 @@ fn claude(event: &str, stdin: &str) -> ExitCode {
             let p: ClaudeTool = serde_json::from_str(stdin).unwrap_or_default();
             let e = Event {
                 cwd: p.base.cwd,
-                session: p.base.session_id.or(p.base.transcript_path),
+                // same key as stop, which needs the transcript path
+                session: p.base.transcript_path.or(p.base.session_id),
                 files: p.tool_input.file_path.into_iter().collect(),
                 ..Event::default()
             };
@@ -230,9 +232,16 @@ fn stop(e: &Event) -> Reply {
         None => return no(),
     };
     let root = &c.repo.root;
-    let out = git(root, &["log", "--since", &since, "--format=%h %s"]);
-    let commits: Vec<String> =
-        out.map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
+    let edits = session_edits(&edits_path(&c.session, root));
+    // commits only when the edit hook saw nothing (e.g. edits via a shell) —
+    // the one git spawn left on this path
+    let commits: Vec<String> = if edits.is_empty() {
+        git(root, &["log", "--since", &since, "--format=%h %s"])
+            .map(|s| s.lines().map(String::from).collect())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
     // bug rule: a marker in the transcript tail with no issue row since start
     let mut bug_signal = None;
     if let Some(t) = e.session.as_deref()
@@ -245,6 +254,7 @@ fn stop(e: &Event) -> Reply {
     });
     let reason = core::decide_stop(&core::StopFacts {
         stop_active: false,
+        edits,
         commits,
         new_row: core::has_new_row(&c.log, since_ms),
         has_log: true,
@@ -253,7 +263,7 @@ fn stop(e: &Event) -> Reply {
     });
     let Some(reason) = reason else { return no() };
     // once per session per worktree per problem — the second end lets through
-    let kind = bug_signal.map(|m| format!("bug:{m}")).unwrap_or("commit".into());
+    let kind = bug_signal.map(|m| format!("bug:{m}")).unwrap_or("work".into());
     if stop_blocked_before(&c.session, &root.to_string_lossy(), &kind) {
         return no();
     }
@@ -356,6 +366,41 @@ fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
     }
 }
 
+/// Per-machine runtime state, never in `.fael/` (that is shared project data).
+/// Keyed by session + worktree so one session across two repos stays apart.
+// ponytail: no cleanup of old sessions — prune by mtime if the dir grows.
+fn edits_path(session: &str, root: &Path) -> PathBuf {
+    let key = session_key(&format!("{session}\0{}", root.to_string_lossy()));
+    state_dir().join("sessions").join(format!("{key}.edits"))
+}
+
+/// Repo-relative paths, one per line, first-seen order. Empty on any error.
+fn session_edits(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
+
+/// Append files not yet listed. Fails open like record_usage.
+fn record_edits(path: &Path, files: &[String]) {
+    let seen = session_edits(path);
+    let new: Vec<&String> = files.iter().filter(|f| !seen.contains(f)).collect();
+    if new.is_empty() {
+        return;
+    }
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+    {
+        use std::io::Write;
+        let body: String = new.iter().map(|f| format!("{f}\n")).collect();
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut f| f.write_all(body.as_bytes()));
+    }
+}
+
 /// Opaque filename for a session id or transcript path (paths are long).
 fn session_key(s: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -440,6 +485,10 @@ fn push(e: &Event, event: &str) -> Reply {
     }
     if files.is_empty() {
         return no();
+    }
+    // only adopted repos — stop never blocks without a log anyway
+    if event == "edit" && !c.session.is_empty() && c.repo.fael.join("log").is_dir() {
+        record_edits(&edits_path(&c.session, &c.repo.root), &files);
     }
     let rows = core::push(&c.log, &files);
     if rows.is_empty() {

@@ -1,15 +1,19 @@
-//! The stop decision, written once for every adapter: block the turn that
-//! produced commits (or announced a bug) without recording a mem row.
+//! The stop decision, written once for every adapter: block the session that
+//! edited files or made commits (or announced a bug) without recording a mem row.
+//! Edits are the primary signal — many agents are told never to commit.
 //! Pure — git and transcript reads live in the adapter (`fael/src/hook.rs`).
 
 use crate::Log;
 use crate::id::ts_ms;
 
-/// What the adapter learned about this turn. `commits` holds `git log
-/// --format=%h %s` lines since the session started, newest first.
+/// What the adapter learned about this turn.
 pub struct StopFacts {
     /// The client already fired this hook once — letting through avoids a loop.
     pub stop_active: bool,
+    /// Repo-relative files the edit hook saw this session, first-seen order.
+    pub edits: Vec<String>,
+    /// `git log --format=%h %s` since the session start — only filled when
+    /// `edits` is empty (fallback for edits made outside the edit hook).
     pub commits: Vec<String>,
     /// Any add or close row stamped at or after the session start.
     pub new_row: bool,
@@ -41,22 +45,25 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
             ),
         );
     }
-    // Commit rule: work landed but nothing was recorded for it.
-    if f.commits.is_empty() || !f.has_log || f.new_row {
+    // Work rule: files edited (or, failing that, commits) with nothing recorded.
+    if (f.edits.is_empty() && f.commits.is_empty()) || !f.has_log || f.new_row {
         return None;
     }
-    let mut out = vec![format!(
-        "{} commit(s) this session with no mem row for this work.",
-        f.commits.len()
-    )];
-    out.extend(f.commits.iter().take(5).map(|c| format!("  {c}")));
-    if f.commits.len() > 5 {
-        out.push(format!("  … +{} more", f.commits.len() - 5));
+    // a markdown checklist the agent can act on as-is, --files prefilled
+    let (what, items, files) = if f.edits.is_empty() {
+        (format!("{} commit(s)", f.commits.len()), &f.commits, "<files>".to_string())
+    } else {
+        (format!("{} file(s) edited", f.edits.len()), &f.edits, f.edits.join(","))
+    };
+    let mut out = vec![format!("{what} this session with no mem row for this work:")];
+    out.extend(items.iter().take(10).map(|c| format!("- [ ] {c}")));
+    if items.len() > 10 {
+        out.push(format!("- … +{} more", items.len() - 10));
     }
-    out.push(
-        "Record one before ending: fael add <decision|issue|note> \"<what happened>\" --files <files>"
-            .into(),
-    );
+    out.push(format!(
+        "Record one before ending: fael add <decision|issue|note> \"<what happened>\" --files {files}"
+    ));
+    out.push("Nothing worth recording? End the turn again — this fires once per session.".into());
     Some(out.join("\n"))
 }
 
@@ -79,6 +86,7 @@ mod tests {
     fn facts() -> StopFacts {
         StopFacts {
             stop_active: false,
+            edits: vec![],
             commits: vec!["abc123 fix login".into()],
             new_row: false,
             has_log: true,
@@ -118,6 +126,21 @@ mod tests {
         let r = decide_stop(&facts()).unwrap();
         assert!(r.contains("1 commit(s)"), "{r}");
         assert!(r.contains("fael add <decision|issue|note>"), "{r}");
+    }
+
+    #[test]
+    fn edits_win_over_commits_and_prefill_files() {
+        let r = decide_stop(&StopFacts {
+            edits: vec!["src/a.rs".into(), "src/b.rs".into()],
+            ..facts()
+        })
+        .unwrap();
+        assert!(r.contains("2 file(s) edited") && r.contains("- [ ] src/a.rs"), "{r}");
+        assert!(r.contains("--files src/a.rs,src/b.rs") && !r.contains("abc123"), "{r}");
+        assert!(
+            decide_stop(&StopFacts { edits: vec!["a".into()], commits: vec![], new_row: true, ..facts() })
+                .is_none()
+        );
     }
 
     #[test]
