@@ -37,7 +37,7 @@ Three ideas carry the whole design:
 | Part | Job | Knows about |
 |---|---|---|
 | **log** | stores rows — the only source of truth | nothing (plain files) |
-| **core** | validates, appends, finds, ranks, decides | the row format · never a client |
+| **core** | validates, appends, finds, ranks, decides — `add_row` · `close_row` · `query` · `Config::from_toml` | the row format · never a client, never git or cwd: the adapter passes `Stamp { by, branch, sha }` and the config text |
 | **adapters** | turn each client's input/output into core calls | one client each · never the rules — paths go through `core.normalize`, never an adapter's own cleanup |
 
 Adding a client touches only an adapter. Changing a rule touches only core. Changing the format is a spec change.
@@ -213,6 +213,7 @@ Reading never fails: broken lines, leftover merge-conflict markers, duplicate id
 
 A query language, a daemon, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
 
-The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary. Two rules bind it:
+The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary. Three rules bind it:
 - **A repo, when there is one, is the truth** — the hosted side is a git client that commits rows into it; it is canonical storage only for workspaces with no repo. Syncing is a union of lines deduped by `id` (append-only + ULID), so there is nothing to resolve.
+- **It calls the same core entry points as the CLI** — `Stamp.by` from the signed-in user, no branch/sha. Hook session state (`~/.local/state/fael`) is CLI-only: HTTP clients have no edit or stop events, so there is nothing to carry to a phone.
 - **Export and import go through this public format without loss of semantic memory** — no data stays locked in the hosted side.
