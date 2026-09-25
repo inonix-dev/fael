@@ -12,6 +12,11 @@ case $part in patch | minor | major) ;; *) echo "usage: $0 [patch|minor|major]" 
 git checkout -q main
 git pull -q --ff-only
 
+# the bump commit itself skips CI (direct push), so the commit under it must already be green
+sha=$(git rev-parse HEAD)
+ci=$(gh run list --workflow ci.yml --commit "$sha" -L1 --json status,conclusion --jq '.[] | "\(.status) \(.conclusion)"')
+[ "$ci" = "completed success" ] || { echo "release: CI on main $(git rev-parse --short HEAD) is '${ci:-not run}' — wait for it to pass" >&2; exit 1; }
+
 old=$(sed -n 's/^version = "\(.*\)"$/\1/p' fael/Cargo.toml | head -n1)
 IFS=. read -r major minor patch <<V
 $old
