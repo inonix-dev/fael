@@ -14,8 +14,23 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn fael(dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
+    fael_as(dir, args, stdin, None)
+}
+
+/// `session` = the `CLAUDE_CODE_SESSION_ID` the caller runs under; `None`
+/// clears it, so the agent running these tests never leaks its own id in.
+fn fael_as(
+    dir: &Path,
+    args: &[&str],
+    stdin: &str,
+    session: Option<&str>,
+) -> (bool, String, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
     c.args(args).current_dir(dir);
+    match session {
+        Some(s) => c.env("CLAUDE_CODE_SESSION_ID", s),
+        None => c.env_remove("CLAUDE_CODE_SESSION_ID"),
+    };
     if !stdin.is_empty() {
         c.stdin(Stdio::piped());
     }
@@ -107,7 +122,11 @@ fn edits_before_the_last_row_do_not_derive() {
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     edit(&d, "s1", &[d.join("src/a.rs")]);
-    let (ok, _, err) = fael(&d, &["add", "note", "covers a.rs", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "covers a.rs", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     // no edits since that row — the older edit must not leak into the next row
     let (ok, _, err) = fael(&d, &["add", "note", "nothing new"], "");
@@ -134,7 +153,11 @@ fn unmatched_path_without_a_close_sibling_is_warned_not_blocked() {
     std::fs::write(d.join("src/live.rs"), "//\n").unwrap();
     // rows about deleted or planned files stay fileable — kickoff/doctor,
     // not the write path, judge those
-    let (ok, _, err) = fael(&d, &["add", "note", "about gone", "--files", "src/gone.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "about gone", "--files", "src/gone.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     assert!(err.contains("matches nothing on disk"), "{err}");
     assert_eq!(row_files(&d, "about gone"), ["src/gone.rs"]);
@@ -148,7 +171,11 @@ fn edited_then_deleted_file_passes_silently() {
     edit(&d, "s1", &[d.join("src/tmp.rs")]);
     std::fs::remove_file(d.join("src/tmp.rs")).unwrap();
     // in this session's edits: evidence, even though it is gone from disk
-    let (ok, _, err) = fael(&d, &["add", "note", "about tmp", "--files", "src/tmp.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "about tmp", "--files", "src/tmp.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     assert!(!err.contains("matches nothing"), "{err}");
 }
@@ -157,9 +184,17 @@ fn edited_then_deleted_file_passes_silently() {
 fn glob_and_anchor_pass_without_evidence() {
     let _g = lock();
     let d = repo();
-    let (ok, _, err) = fael(&d, &["add", "note", "pattern row", "--files", "src/*.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "pattern row", "--files", "src/*.rs"],
+        "",
+    );
     assert!(ok, "{err}");
-    let (ok, _, err) = fael(&d, &["add", "note", "anchor row", "--files", "doc:pricing"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "anchor row", "--files", "doc:pricing"],
+        "",
+    );
     assert!(ok, "{err}");
 }
 
@@ -169,7 +204,11 @@ fn untracked_shell_made_file_passes() {
     let d = repo();
     // the edit hook never saw it (no hook event), but git status knows it
     std::fs::write(d.join("src/shell.rs"), "//\n").unwrap();
-    let (ok, _, err) = fael(&d, &["add", "note", "shell file", "--files", "src/shell.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "shell file", "--files", "src/shell.rs"],
+        "",
+    );
     assert!(ok, "{err}");
 }
 
@@ -199,6 +238,7 @@ fn mcp_add_without_files_derives_too() {
     ];
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
         .arg("mcp")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
         .current_dir(&d)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -217,9 +257,76 @@ fn mcp_add_without_files_derives_too() {
     assert_eq!(r.len(), 2, "{out}");
     // first call derives src/a.rs; the second finds no new edits and fails
     assert_eq!(r[0]["result"]["isError"], false, "{out}");
-    assert!(r[1]["result"]["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("files is required"), "{out}");
+    assert!(
+        r[1]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("files is required"),
+        "{out}"
+    );
     assert_eq!(row_files(&d, "via mcp"), ["src/a.rs"]);
+}
+
+#[test]
+fn concurrent_sessions_never_derive_each_others_files() {
+    let _g = lock();
+    let d = repo();
+    std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
+    std::fs::write(d.join("src/b.rs"), "// b\n").unwrap();
+    edit(&d, "s1", &[d.join("src/a.rs")]);
+    // Claude's hook keys the session by transcript path; the CLI sees the id
+    edit(
+        &d,
+        "/home/u/.claude/projects/p/s2.jsonl",
+        &[d.join("src/b.rs")],
+    );
+    // two active sessions and no id: ambiguous, so no derive
+    let (ok, _, err) = fael(&d, &["add", "note", "whose"], "");
+    assert!(!ok && err.contains("files is required"), "{err}");
+    // the caller's own session only, matched through the transcript stem
+    let (ok, _, err) = fael_as(&d, &["add", "note", "mine is b"], "", Some("s2"));
+    assert!(ok, "{err}");
+    assert_eq!(row_files(&d, "mine is b"), ["src/b.rs"]);
+}
+
+#[test]
+fn force_files_a_planned_sibling_of_an_existing_file() {
+    let _g = lock();
+    let d = repo();
+    std::fs::write(d.join("src/a.rs"), "//\n").unwrap();
+    let (ok, _, err) = fael(&d, &["add", "note", "plan b", "--files", "src/b.rs"], "");
+    assert!(!ok && err.contains("--force"), "{err}");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "plan b", "--files", "src/b.rs", "--force"],
+        "",
+    );
+    assert!(ok && err.contains("matches nothing on disk"), "{err}");
+    assert_eq!(row_files(&d, "plan b"), ["src/b.rs"]);
+}
+
+#[test]
+fn staged_rename_source_is_not_evidence() {
+    let _g = lock();
+    let d = repo();
+    let git = |args: &[&str]| {
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    std::fs::create_dir_all(d.join("xyzc")).unwrap();
+    std::fs::write(d.join("xyzc/foo.rs"), "//\n").unwrap();
+    git(&["add", "xyzc/foo.rs"]);
+    git(&["commit", "-qm", "foo"]);
+    std::fs::create_dir_all(d.join("lib")).unwrap();
+    git(&["mv", "xyzc/foo.rs", "lib/foo.rs"]);
+    // -z prints `R  lib/foo.rs\0src/foo.rs`; the source must not be read as
+    // an entry of its own (`c/foo.rs` after chopping the status columns)
+    let (ok, _, err) = fael(&d, &["add", "note", "chopped", "--files", "c/foo.rs"], "");
+    assert!(ok && err.contains("matches nothing on disk"), "{err}");
 }

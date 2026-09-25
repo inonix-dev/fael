@@ -301,7 +301,7 @@ fn stop(e: &Event) -> Reply {
     let last_row = core::last_row_ms(&c.log, since_ms);
     let recorded = session_edits(&edits_path(&c.session, root));
     let mut edits: Vec<String> = vec![];
-    for (path, at, _) in &recorded {
+    for (path, at, ..) in &recorded {
         if last_row.is_none_or(|r| *at > r) && !edits.contains(path) {
             edits.push(path.clone());
         }
@@ -458,12 +458,6 @@ pub(crate) fn is_anchor(f: &str) -> bool {
             .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
 }
 
-/// Apply `f` unless the entry is a `scheme:ref` anchor (anchors are opaque,
-/// never filesystem paths).
-fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
-    if is_anchor(f) { f.to_string() } else { resolve(f) }
-}
-
 /// Per-machine runtime state, never in `.fael/` (that is shared project data).
 /// Keyed by session + worktree so one session across two repos stays apart.
 // ponytail: no cleanup of old sessions — prune by mtime if the dir grows.
@@ -480,10 +474,11 @@ fn seen_path(session: &str, root: &Path) -> PathBuf {
     state_dir().join("sessions").join(format!("{key}.seen"))
 }
 
-/// One `{"path","at"[, "worktree"]}` line per edit event, in order —
-/// (path, at ms, worktree or None for lines written before it was recorded).
+/// One `{"path","at"[, "worktree","session"]}` line per edit event, in order —
+/// (path, at ms, worktree, session; None for lines written before those were).
 /// A torn or unreadable line is skipped; any error is an empty list.
-pub(crate) fn session_edits(path: &Path) -> Vec<(String, i64, Option<String>)> {
+pub(crate) type Edit = (String, i64, Option<String>, Option<String>);
+pub(crate) fn session_edits(path: &Path) -> Vec<Edit> {
     let Ok(s) = std::fs::read_to_string(path) else {
         return vec![];
     };
@@ -494,15 +489,16 @@ pub(crate) fn session_edits(path: &Path) -> Vec<(String, i64, Option<String>)> {
                 v["path"].as_str()?.to_string(),
                 core::ts_ms(v["at"].as_str()?)?,
                 v["worktree"].as_str().map(String::from),
+                v["session"].as_str().map(String::from),
             ))
         })
         .collect()
 }
 
-/// Append one line per file. Fails open like record_usage. The worktree rides
-/// along so `fael add` without `--files` can tell which session files belong
-/// to its repo (the filename hash is one-way).
-fn record_edits(path: &Path, worktree: &str, files: &[String]) {
+/// Append one line per file. Fails open like record_usage. Worktree and
+/// session ride along so `fael add` without `--files` can tell which session
+/// files are its own, in its repo (the filename hash is one-way).
+fn record_edits(path: &Path, worktree: &str, session: &str, files: &[String]) {
     let Some(at) = now_rfc3339() else { return };
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
@@ -513,7 +509,7 @@ fn record_edits(path: &Path, worktree: &str, files: &[String]) {
             .map(|f| {
                 format!(
                     "{}\n",
-                    serde_json::json!({"path": f, "at": at, "worktree": worktree})
+                    serde_json::json!({"path": f, "at": at, "worktree": worktree, "session": session})
                 )
             })
             .collect();
@@ -667,16 +663,14 @@ fn push(e: &Event, event: &str) -> Reply {
         // the client sends whatever the OS gave it (`/var/…` vs `/private/var/…`);
         // resolve symlinks while the repo root is already resolved, or the
         // lexical strip in normalize_files reads the file as outside the repo
-        let f = unless_anchor(f, |f| {
-            let p = if Path::new(f).is_absolute() {
-                PathBuf::from(f)
-            } else {
-                c.repo.cwd.join(f)
-            };
-            std::fs::canonicalize(&p)
+        // (anchors are opaque, never filesystem paths)
+        let f = if is_anchor(f) {
+            f.clone()
+        } else {
+            std::fs::canonicalize(c.repo.cwd.join(f)) // join keeps an absolute f
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| f.to_string())
-        });
+                .unwrap_or_else(|_| f.clone())
+        };
         if let Ok(mut n) =
             core::normalize_files(std::slice::from_ref(&f), &c.repo.cwd, &c.repo.root)
         {
@@ -691,6 +685,7 @@ fn push(e: &Event, event: &str) -> Reply {
         record_edits(
             &edits_path(&c.session, &c.repo.root),
             &c.repo.root.to_string_lossy(),
+            &c.session,
             &files,
         );
     }
