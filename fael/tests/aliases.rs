@@ -289,7 +289,17 @@ fn mv_records_alias_for_anchors_git_cannot_see() {
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     // anchors need no file on disk — `add` never checked that
-    let (ok, out, err) = fael(&d, &["add", "decision", "pricing choice", "--files", "doc:pricing"], "");
+    let (ok, out, err) = fael(
+        &d,
+        &[
+            "add",
+            "decision",
+            "pricing choice",
+            "--files",
+            "doc:pricing",
+        ],
+        "",
+    );
     assert!(ok, "{err}");
     let id = out.split_whitespace().next().unwrap().to_string();
 
@@ -337,4 +347,20 @@ fn help_exits_zero_and_lists_mv() {
         assert!(ok, "{args:?} {err}");
         assert!(out.contains("fael mv"), "{out}");
     }
+}
+
+#[test]
+fn deleted_row_file_is_cached_dead_so_the_hook_skips_git() {
+    // a committed delete has no HEAD blob: refresh records it, and read/edit
+    // stop spawning ls-tree for it on every call
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    add(&d, "src/a.rs");
+    git(&d, &["rm", "-q", "src/a.rs"]);
+    commit_all(&d, "delete a");
+    session_start(&d);
+    let cache = std::fs::read_to_string(d.join(".fael/cache/aliases.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&cache).unwrap();
+    assert_eq!(v["dead"], serde_json::json!(["src/a.rs"]), "{cache}");
 }

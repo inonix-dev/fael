@@ -272,7 +272,9 @@ pub fn validate_alias(row: &Row, cfg: &Config) -> Result<(), String> {
         );
     }
     if row.reference.is_some() {
-        return Err("rejected: an alias row closes nothing — it only says where a path moved".into());
+        return Err(
+            "rejected: an alias row closes nothing — it only says where a path moved".into(),
+        );
     }
     let pair = row
         .extra

@@ -48,8 +48,7 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     // `fael help`, `fael --help`, `fael <cmd> --help` — usage on stdout, exit 0
-    if argv.first().is_some_and(|c| c == "help")
-        || argv.iter().any(|x| x == "--help" || x == "-h")
+    if argv.first().is_some_and(|c| c == "help") || argv.iter().any(|x| x == "--help" || x == "-h")
     {
         println!("{USAGE}");
         return Ok(ExitCode::SUCCESS);

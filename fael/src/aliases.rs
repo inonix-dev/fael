@@ -22,6 +22,11 @@ struct Cache {
     v: u8,
     head: String,
     renames: Vec<(String, String)>,
+    /// Row paths missing from disk with no blob at `head` — deleted, not
+    /// moved. The hook skips them, so a long-deleted file never costs a
+    /// spawn per read/edit; refresh recomputes the list.
+    #[serde(default)]
+    dead: Vec<String>,
 }
 
 /// Aliases for `push` / `find --files` / `kickoff`. `refresh` runs git;
@@ -41,6 +46,8 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
         .as_ref()
         .map(|c| c.renames.clone())
         .unwrap_or_default();
+    // set when git was read: the cache is rewritten below, dead list included
+    let mut write: Option<String> = None;
     let push_pair = |renames: &mut Vec<(String, String)>, p: (String, String)| {
         if !p.0.is_empty() && !p.1.is_empty() && p.0 != p.1 && !renames.contains(&p) {
             renames.push(p);
@@ -58,7 +65,7 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
                 for p in pairs {
                     push_pair(&mut renames, p);
                 }
-                write_cache(&r.fael, &head, &renames);
+                write = Some(head);
             }
             None => {
                 if let Some((head, pairs)) = git_renames(&r.root, None) {
@@ -66,7 +73,7 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
                     for p in pairs {
                         push_pair(&mut renames, p);
                     }
-                    write_cache(&r.fael, &head, &renames);
+                    write = Some(head);
                 }
             }
         }
@@ -77,18 +84,43 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
             for p in pairs {
                 push_pair(&mut renames, p);
             }
-            write_cache(&r.fael, &head, &renames);
+            write = Some(head);
         }
     }
-    let mut al = core::Aliases::from_pairs(renames);
+    let mut al = core::Aliases::from_pairs(renames.clone());
     // `fael mv` rows are read from the log every time, never cached.
     al.merge(&core::Aliases::from_log(log));
     // Moves git hasn't committed yet: live blob-hash comparison, never cached
-    // (an uncommitted tree changes under us). Costs nothing on a clean tree —
-    // one `exists` per distinct row file, no spawn — and only spawns git when
-    // a row's path is actually missing, i.e. exactly when a move may hide a
-    // row. Fail-open like everything else in this module.
-    al.merge_pairs(&uncommitted_pairs(&r.root, log, &al));
+    // (an uncommitted tree changes under us). Only a row path missing from
+    // disk costs a spawn, and one already known dead (no HEAD blob: deleted,
+    // not moved) is skipped — otherwise one old deleted file taxed every
+    // read/edit hook (~9 ms per spawn). Fail-open like everything else here.
+    let mut missing = al.missing(&r.root, log);
+    missing.truncate(200); // caps keep a huge worktree from stalling a hook
+    if let Some(head) = write {
+        // git was read anyway: settle which missing paths are dead at HEAD
+        // (a failed ls-tree marks nothing dead — the hook just keeps asking)
+        let blobs = git_blobs(&r.root, &missing);
+        let dead: Vec<String> = match &blobs {
+            Some(b) => missing
+                .iter()
+                .filter(|m| !b.contains_key(*m))
+                .cloned()
+                .collect(),
+            None => vec![],
+        };
+        let blobs = blobs.unwrap_or_default();
+        write_cache(&r.fael, &head, &renames, &dead);
+        al.merge_pairs(&uncommitted_pairs(&r.root, &missing, &blobs));
+    } else {
+        let dead = cached.map(|c| c.dead).unwrap_or_default();
+        missing.retain(|m| !dead.contains(m));
+        if !missing.is_empty()
+            && let Some(blobs) = git_blobs(&r.root, &missing)
+        {
+            al.merge_pairs(&uncommitted_pairs(&r.root, &missing, &blobs));
+        }
+    }
     al
 }
 
@@ -172,17 +204,9 @@ fn parse_log(out: &str) -> Vec<(String, String)> {
 /// pairs (fail-open). Caps keep a huge worktree from stalling a hook.
 fn uncommitted_pairs(
     root: &Path,
-    log: &core::Log,
-    al: &core::Aliases,
+    missing: &[String],
+    blobs: &std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
-    let mut missing = al.missing(root, log);
-    if missing.is_empty() {
-        return vec![];
-    }
-    missing.truncate(200);
-    let Some(blobs) = git_blobs(root, &missing) else {
-        return vec![];
-    };
     if blobs.is_empty() {
         return vec![];
     }
@@ -215,7 +239,12 @@ fn uncommitted_pairs(
 /// The file-name extension (`rs` for `src/a.rs`, `""` for `Makefile`) — a
 /// move keeps it, so it bounds which new files get hashed per missing old.
 fn extension(p: &str) -> &str {
-    p.rsplit('/').next().unwrap_or(p).rsplit_once('.').map(|(_, e)| e).unwrap_or("")
+    p.rsplit('/')
+        .next()
+        .unwrap_or(p)
+        .rsplit_once('.')
+        .map(|(_, e)| e)
+        .unwrap_or("")
 }
 
 /// HEAD blob per path, one spawn: `git ls-tree HEAD -z -- <paths>`. `None` =
@@ -223,7 +252,11 @@ fn extension(p: &str) -> &str {
 fn git_blobs(root: &Path, paths: &[String]) -> Option<std::collections::HashMap<String, String>> {
     let mut args = vec!["ls-tree", "HEAD", "-z", "--"];
     args.extend(paths.iter().map(String::as_str));
-    let o = Command::new("git").args(&args).current_dir(root).output().ok()?;
+    let o = Command::new("git")
+        .args(&args)
+        .current_dir(root)
+        .output()
+        .ok()?;
     if !o.status.success() {
         return None;
     }
@@ -247,7 +280,14 @@ fn git_new_files(root: &Path) -> Vec<String> {
     let mut out = vec![];
     for args in [
         &["ls-files", "--others", "--exclude-standard", "-z"][..],
-        &["diff", "--cached", "--name-only", "-z", "--diff-filter=A", "--"][..],
+        &[
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--diff-filter=A",
+            "--",
+        ][..],
     ] {
         if let Ok(o) = Command::new("git").args(args).current_dir(root).output()
             && o.status.success()
@@ -269,7 +309,11 @@ fn git_new_files(root: &Path) -> Vec<String> {
 fn git_hash_object(root: &Path, files: &[&String]) -> Option<Vec<String>> {
     let mut args = vec!["hash-object", "--"];
     args.extend(files.iter().map(|s| s.as_str()));
-    let o = Command::new("git").args(&args).current_dir(root).output().ok()?;
+    let o = Command::new("git")
+        .args(&args)
+        .current_dir(root)
+        .output()
+        .ok()?;
     (o.status.success()).then(|| {
         String::from_utf8_lossy(&o.stdout)
             .split_whitespace()
@@ -281,12 +325,13 @@ fn git_hash_object(root: &Path, files: &[&String]) -> Option<Vec<String>> {
 /// Write the cache atomically (tmp + rename) and keep `.fael/.gitignore`
 /// naming both `cache/` and `.lock` — the lock file must stay out of git too
 /// (issue `01M3CM2P3`). Fail-open: a write error only loses the cache.
-fn write_cache(fael: &Path, head: &str, renames: &[(String, String)]) {
+fn write_cache(fael: &Path, head: &str, renames: &[(String, String)], dead: &[String]) {
     let dir = fael.join("cache");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let body = serde_json::json!({"v": 1, "head": head, "renames": renames}).to_string();
+    let body =
+        serde_json::json!({"v": 1, "head": head, "renames": renames, "dead": dead}).to_string();
     let tmp = dir.join(format!(".aliases-{}.tmp", std::process::id()));
     if std::fs::write(&tmp, body.as_bytes()).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join("aliases.json"));

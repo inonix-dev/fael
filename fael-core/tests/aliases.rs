@@ -155,7 +155,10 @@ fn moved_row_validates_and_feeds_from_log() {
         rows: vec![row],
         ..Log::default()
     };
-    assert_eq!(Aliases::from_log(&log).expand("src/b.rs"), ["src/b.rs", "src/a.rs"]);
+    assert_eq!(
+        Aliases::from_log(&log).expand("src/b.rs"),
+        ["src/b.rs", "src/a.rs"]
+    );
 }
 
 #[test]
@@ -196,7 +199,9 @@ fn missing_lists_only_open_unresolved_paths() {
     let mut carrier = row_on("M0000000000000000000000001", &[]);
     carrier.kind.clear();
     carrier.files.clear();
-    carrier.extra.insert("moved".into(), json!({"from": "away.rs", "to": "here.rs"}));
+    carrier
+        .extra
+        .insert("moved".into(), json!({"from": "away.rs", "to": "here.rs"}));
     let log = Log {
         rows: vec![present, gone.clone(), anchored, shut.clone(), carrier],
         closes: vec![Row::close("t-1", &shut.id, "done")],

@@ -1,7 +1,9 @@
 //! Reading and appending `.fael/log/**` (format.md §Layout, §Writers, §Readers).
 //! Reads never fail and take no lock; appends hold `.fael/.lock` and write one whole line.
 
-use crate::{Config, Row, Stamp, closed, resolve, validate, validate_alias, validate_close, warnings};
+use crate::{
+    Config, Row, Stamp, closed, resolve, validate, validate_alias, validate_close, warnings,
+};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
