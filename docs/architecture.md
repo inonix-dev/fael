@@ -184,4 +184,6 @@ Reading never fails: broken lines, leftover merge-conflict markers, duplicate id
 
 A query language, a daemon, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
 
-The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary, and a repo's `.fael/` must always be exportable from it.
+The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary. Two rules bind it:
+- **A repo, when there is one, is the truth** — the hosted side is a git client that commits rows into it; it is canonical storage only for workspaces with no repo. Syncing is a union of lines deduped by `id` (append-only + ULID), so there is nothing to resolve.
+- **Export and import go through this public format without loss of semantic memory** — no data stays locked in the hosted side.
