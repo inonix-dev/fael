@@ -4,8 +4,8 @@
 > hooks and maintenance commands are design. This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
-fael is a memory log for coding agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, …)
-and every person on the team reads and writes the same log, git carries it between machines, and there is no server.
+fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat
+host speaking MCP, …) and every person on the team reads and writes the same log, git carries it between machines, and there is no server.
 
 Three ideas carry the whole design:
 
@@ -67,7 +67,9 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 
 - `id` is a ULID — time-sortable, and it never collides across machines.
 - `kind` is `decision`, `issue` or `note`, plus any kinds the repo declares in `config.toml`.
-- `files` is fael's **locality index** — it is what makes memory come to the agent, and why fael needs no tags, links or graph. At least one repo-relative path (or anchor such as `doc:pricing`) is enforced.
+- `files` is fael's **locality index**: stable references the row is about — it is what makes memory come to the agent, and why fael needs no tags, links or graph. At least one is enforced, in one of two forms:
+  - **path** `src/auth/session.ts` — normalised to repo-relative
+  - **anchor** `scheme:ref` (`doc:pricing`, `issue:#12`, `customer:acme`) — for memory with no file behind it. fael checks only the syntax; the ref is opaque (`/` in `doc:pricing/2026` is not a path) and there is no registry of schemes — what a scheme means belongs to the agent.
 - `key` is optional — a row with only `files` is complete. When used it is a stable namespace with Redis-style names (`auth:session:timeout`) and is queried with glob patterns (`auth:*`).
 - A close is its own row, written to the `.close.jsonl` file. It never edits the row it closes.
 
@@ -78,6 +80,15 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 - Durability comes from git; rows are not fsynced one by one.
 
 ## 3. API
+
+### Integration modes
+
+The storage and core are identical; only how the agent reaches fael differs.
+
+- **Enforcement** — coding agents with lifecycle hooks: `agent → hook → fael`. Session brief, memory attached to reads, stop enforcement.
+- **Tool** — chat agents and MCP hosts without hooks: `agent → MCP → fael`. The agent calls `find` at the start and `add` on its own for durable things (an explicit "remember", a rule, a stable preference, a correction) — never for chatter. That judgement is agent behaviour (skill / tool description), not a core rule. Tool mode has no commit step: rows reach git only when the host or the user commits `.fael/`.
+
+A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integration.
 
 ### CLI
 
@@ -95,12 +106,12 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 | `fael doctor [--fix]` | find and repair damaged logs — `--fix` moves bad lines to quarantine, it never deletes them |
 | `fael stats` | how many bytes and tokens fael has put into agents' context |
 
-### MCP (3 tools — each schema is paid for in every session, so the list stays short)
+### MCP (3 tools on stdio — each schema is paid for in every session, so the list stays short)
 
 | Tool | Input | Notes |
 |---|---|---|
-| `find` | `files[]` `text` `key` `kind` `since` `limit` | read-only |
-| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call |
+| `find` | `files[]` `text` `key` `kind` `since` `limit` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool |
+| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
 | `close` | `id` `text` | |
 
 ### Hook protocol

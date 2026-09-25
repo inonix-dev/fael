@@ -156,13 +156,17 @@ fn check_common(row: &Row, cfg: &Config) -> Result<(), String> {
 
 /// `scheme:ref` anchor (`doc:pricing`, `issue:#12`): a scheme of ≥ 2 chars `[a-z0-9+.-]`, starting
 /// with a letter, before the first `:` and before any `/`. Two chars minimum so `C:` stays a drive.
-fn anchor(f: &str) -> bool {
-    f.split_once(':').is_some_and(|(s, _)| {
-        s.len() >= 2
-            && s.as_bytes()[0].is_ascii_lowercase()
-            && s.bytes()
-                .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
-    })
+/// Returns the ref — opaque to fael (`/` in it is not a path separator); it must be non-empty.
+// ponytail: a root-level file named like `notes:v2.md` reads as an anchor — rare, rename the file
+fn anchor(f: &str) -> Option<&str> {
+    f.split_once(':')
+        .filter(|(s, _)| {
+            s.len() >= 2
+                && s.as_bytes()[0].is_ascii_lowercase()
+                && s.bytes()
+                    .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
+        })
+        .map(|(_, r)| r)
 }
 
 fn absolute(p: &str) -> bool {
@@ -174,10 +178,14 @@ fn absolute(p: &str) -> bool {
 /// The canonical form `validate` accepts: an anchor, or `/`-separated segments with no
 /// empty, `.` or `..` segment, no `\\` and no leading `/` or drive.
 fn canonical(f: &str) -> bool {
-    anchor(f)
-        || (!f.contains('\\')
-            && !absolute(f)
-            && f.split('/').all(|s| !s.is_empty() && s != "." && s != ".."))
+    anchor(f).map_or_else(
+        || {
+            !f.contains('\\')
+                && !absolute(f)
+                && f.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+        },
+        |r| !r.trim().is_empty(),
+    )
 }
 
 /// Turn what a client sent into repo-relative paths — the one normalisation every adapter uses
@@ -193,8 +201,14 @@ pub fn normalize_files(files: &[String], cwd: &Path, root: &Path) -> Result<Vec<
         .iter()
         .map(|f| {
             let f = f.trim();
-            if anchor(f) {
-                return Ok(f.to_string());
+            if let Some(r) = anchor(f) {
+                return if r.trim().is_empty() {
+                    Err(format!(
+                        "rejected: anchor {f:?} has no ref — write scheme:ref, e.g. doc:pricing"
+                    ))
+                } else {
+                    Ok(f.to_string())
+                };
             }
             let p = f.replace('\\', "/");
             let full = if absolute(&p) {

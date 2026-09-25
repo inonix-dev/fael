@@ -39,7 +39,7 @@ Reference implementation: [`fael-core`](../fael-core/src).
 | `by` | yes | writer id |
 | `kind` | yes | `decision` · `issue` · `note`, or a kind listed in `config.toml` `kinds = [...]` |
 | `text` | yes | non-empty, written to stand alone |
-| `files` | yes, ≥ 1 | repo-relative paths (`src/a.rs` — never `./`, `..`, absolute or `\`), or `scheme:ref` anchors (`issue:#12`, `doc:pricing`; scheme ≥ 2 chars `[a-z0-9+.-]`) |
+| `files` | yes, ≥ 1 | stable references: repo-relative paths (`src/a.rs` — never `./`, `..`, absolute or `\`), or `scheme:ref` anchors (`issue:#12`, `doc:pricing`; scheme ≥ 2 chars `[a-z0-9+.-]` starting with a letter, ref non-empty and opaque) |
 | `key` | no | `:`-separated segments of `[a-z0-9._-]+`, ≤ 64 chars, e.g. `auth:session:timeout` |
 | `supersedes` | no | id of an older row this one replaces |
 | `client` `model` `session` `branch` `sha` | no | filled in by tools, never by the agent |

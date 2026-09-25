@@ -279,6 +279,8 @@ fn files_normalised_to_repo_relative() {
     assert_eq!(n("sub\\win.rs").unwrap(), ["src/sub/win.rs"]);
     assert_eq!(n(" doc:pricing ").unwrap(), ["doc:pricing"]);
     assert_eq!(n("issue:#12").unwrap(), ["issue:#12"]);
+    assert_eq!(n("doc:pricing/2026").unwrap(), ["doc:pricing/2026"]); // ref is opaque
+    assert!(n("doc:").unwrap_err().contains("no ref"));
     for bad in [
         "../../etc/passwd",
         "/etc/passwd",
@@ -307,6 +309,8 @@ fn validate_rejects_non_canonical_files() {
         "a//b.rs",
         "a/./b.rs",
         "a/",
+        "doc:",
+        "doc: ",
     ] {
         let e = validate(&row("note", &[bad]), &Config::default()).unwrap_err();
         assert!(e.contains("not repo-relative"), "{bad}: {e}");
