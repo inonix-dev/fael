@@ -129,7 +129,12 @@ pub fn compact(fael: &Path, root: &Path, opts: &Opts, month: &str) -> Result<Rep
         let mut deleted = vec![];
         for f in files {
             std::fs::remove_file(f).map_err(|e| format!("{}: {e}", f.display()))?;
-            deleted.push(f.strip_prefix(fael).unwrap_or(f).display().to_string());
+            deleted.push(
+                f.strip_prefix(fael)
+                    .unwrap_or(f)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
         }
         report.writers.push(WriterReport {
             writer,

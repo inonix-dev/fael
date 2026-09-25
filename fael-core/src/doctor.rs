@@ -319,7 +319,12 @@ fn multi_fael(root: &Path) -> Vec<String> {
             let name = e.file_name().to_string_lossy().into_owned();
             if name == ".fael" {
                 if p != root.join(".fael") {
-                    out.push(p.strip_prefix(root).unwrap_or(&p).display().to_string());
+                    out.push(
+                        p.strip_prefix(root)
+                            .unwrap_or(&p)
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
                 }
                 continue; // never descend into a log dir
             }
