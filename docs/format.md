@@ -12,8 +12,9 @@ Reference implementation: [`fael-core`](../fael-core/src).
     <writer>/
       2026-09.jsonl            add rows written in that month (UTC, from ts) — append-only
       2026-09.close.jsonl      close rows written in that month — append-only
-      compact.<ULID>.jsonl     immutable
-    _import/<ULID>.jsonl       immutable
+      compact.<ULID>.jsonl     immutable (+ a `.close.jsonl` companion when closes name no row here)
+    _import/<ULID>.jsonl       immutable (+ a `.close.jsonl` companion, same rule)
+  quarantine/<file>.<ULID>.jsonl  lines `doctor --fix` removed — never re-read, never deleted
   .lock                        not in git
 ```
 

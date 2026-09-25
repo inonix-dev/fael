@@ -2,8 +2,10 @@
 
 > **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
 > `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet), `fael mcp`
-> (stdio, 3 tools), and `fael hook <stop|session-start|read|edit>` (neutral + claude/codex adapters) with
-> per-machine usage accounting (`fael stats`), and `fael install` (Claude Code, Codex, OpenCode); maintenance commands are design. This page is the contract the code is built against —
+> (stdio, 3 tools), `fael hook <stop|session-start|read|edit>` (neutral + claude/codex adapters) with
+> per-machine usage accounting (`fael stats`), `fael install` (Claude Code, Codex, OpenCode),
+> and the maintenance commands `fael doctor [--fix]` · `fael compact` · `fael import` (SPEC §6, §11).
+> This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat

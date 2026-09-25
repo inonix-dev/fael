@@ -5,6 +5,7 @@
 
 mod hook;
 mod install;
+mod maintain;
 mod mcp;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
@@ -20,6 +21,9 @@ const USAGE: &str = "usage:
    fael kickoff [file|anchor]
    fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
    fael stats                  tokens fael has put into context, per machine
+   fael doctor [--fix]
+   fael compact [--writer id] [--before yyyy-mm] [--prune]
+   fael import <path> [--map old/=new/]
    fael mcp                      MCP server on stdio
    fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
  every command takes --json";
@@ -46,6 +50,9 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
         ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
+        ("doctor", []) => maintain::doctor(&a),
+        ("compact", []) => maintain::compact(&a),
+        ("import", [src]) => maintain::import(&a, src),
         ("mcp", []) => mcp::serve().map(|()| ExitCode::SUCCESS),
         ("install", []) => install::cmd(a.one("client"), a.has("dry-run"), a.has("replace-fapony"))
             .map(|()| ExitCode::SUCCESS),
@@ -80,10 +87,11 @@ impl Args {
                 None => (name.to_string(), None),
             };
             match name.as_str() {
-                "all" | "json" | "dry-run" | "replace-fapony" => {
+                "all" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune" => {
                     a.flags.entry(name).or_default();
                 }
-                "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" => {
+                "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
+                | "before" | "map" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -101,6 +109,11 @@ impl Args {
 
     fn one(&self, f: &str) -> Option<String> {
         self.flags.get(f).and_then(|v| v.last()).cloned()
+    }
+
+    /// `--map a=b --map c=d` → all values, in order.
+    fn many(&self, f: &str) -> Vec<String> {
+        self.flags.get(f).cloned().unwrap_or_default()
     }
 
     /// `--files a,b --files c` → [a, b, c]
