@@ -773,11 +773,28 @@ pub fn stats(json: bool) -> Result<(), String> {
     let mut by_id: HashMap<String, usize> = HashMap::new();
     // (repo, "stop-work"|"stop-bug", ms) — checked against each repo's log below
     let mut blocks: Vec<(String, String, i64)> = vec![];
+    // benchmark/test repos live in the OS temp dir and would swamp real usage
+    // (01M3CRR6A) — skipped, unless the state dir is scratch too: that run
+    // is a test or bench reading its own usage back
+    let tmp = [
+        std::env::temp_dir(),
+        std::env::temp_dir().canonicalize().unwrap_or_default(),
+    ];
+    let in_tmp = |p: &Path| {
+        tmp.iter()
+            .any(|t| !t.as_os_str().is_empty() && p.starts_with(t))
+    };
+    let keep_tmp = in_tmp(&path);
+    let mut skipped = 0usize;
     for line in s.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
         };
+        if !keep_tmp && v["repo"].as_str().is_some_and(|r| in_tmp(Path::new(r))) {
+            skipped += 1;
+            continue;
+        }
         n += 1;
         let b = v["bytes"].as_u64().unwrap_or(0) as usize;
         let t = v["est_tokens"].as_u64().unwrap_or(0) as usize;
@@ -815,7 +832,7 @@ pub fn stats(json: bool) -> Result<(), String> {
         }
     }
     if n == 0 {
-        println!("fael: no usage recorded yet");
+        println!("fael: no usage recorded yet ({skipped} from temp repos skipped)");
         return Ok(());
     }
     // did a row follow each block? work: any add/close · bug: an issue row.
@@ -849,7 +866,7 @@ pub fn stats(json: bool) -> Result<(), String> {
         println!(
             "{}",
             serde_json::json!({
-                "events": n, "bytes": bytes, "est_tokens": toks,
+                "events": n, "bytes": bytes, "est_tokens": toks, "skipped_temp": skipped,
                 "by_event": by_event.iter().map(|(k, (c, t))| (k.clone(), serde_json::json!({"events": c, "est_tokens": t}))).collect::<serde_json::Map<String,_>>(),
                 "by_client": by_client.iter().map(|(k, (c, t))| (k.clone(), serde_json::json!({"events": c, "est_tokens": t}))).collect::<serde_json::Map<String,_>>(),
                 "top_rows": top,
@@ -865,6 +882,9 @@ pub fn stats(json: bool) -> Result<(), String> {
         bytes,
         toks
     );
+    if skipped > 0 {
+        println!("  skipped ×{skipped} from temp repos (benchmarks, tests)");
+    }
     let mut ev: Vec<_> = by_event.iter().collect();
     ev.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     for (k, (c, t)) in ev {

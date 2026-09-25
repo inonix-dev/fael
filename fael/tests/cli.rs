@@ -51,6 +51,9 @@ fn add_find_close_round_trip() {
     );
     assert!(ok, "{err}");
     let id = out.split_whitespace().next().unwrap().to_string();
+    // the first write keeps .lock out of git, even with no alias cache yet (01M3CM2P3)
+    let ignore = std::fs::read_to_string(d.join(".fael/.gitignore")).unwrap();
+    assert!(ignore.lines().any(|l| l == ".lock"), "{ignore}");
     // Windows prints `\` separators
     assert!(
         out.replace('\\', "/").contains(".fael/log/test-user-"),
