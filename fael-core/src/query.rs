@@ -366,6 +366,15 @@ pub fn keys(log: &Log, pattern: Option<&str>) -> Vec<KeyUse> {
     out
 }
 
+/// No filter = the session brief under the kickoff budget; otherwise find under the find budget.
+pub fn query<'a>(log: &'a Log, f: &Filter, cfg: &Config) -> (Vec<&'a Row>, usize) {
+    if f.is_empty() && !f.all {
+        (brief(log, f), cfg.kickoff_tokens)
+    } else {
+        (find(log, f), cfg.find_tokens)
+    }
+}
+
 /// Warnings for a row about to be added — never a reject: a key domain the repo did not declare,
 /// a new key close to an existing one, text over `warn.row_tokens`.
 pub fn warnings(row: &Row, log: &Log, cfg: &Config) -> Vec<String> {

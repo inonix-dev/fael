@@ -161,13 +161,23 @@ fn worktree_root_is_where_dot_git_file_sits() {
     // a linked worktree has `.git` as a file — root must be the worktree, not the main repo
     let d = repo();
     let git = |args: &[&str]| {
-        assert!(Command::new("git").args(args).current_dir(&d).status().unwrap().success())
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success()
+        )
     };
     git(&["commit", "-q", "--allow-empty", "-m", "init"]);
     let wt = d.with_extension("wt");
     git(&["worktree", "add", "-q", wt.to_str().unwrap()]);
     std::fs::create_dir_all(wt.join("src")).unwrap();
-    let (ok, _, err) = fael(&wt.join("src"), &["add", "note", "wt row", "--files", "a.rs"]);
+    let (ok, _, err) = fael(
+        &wt.join("src"),
+        &["add", "note", "wt row", "--files", "a.rs"],
+    );
     assert!(ok, "{err}");
     assert!(wt.join(".fael/log").is_dir() && !d.join(".fael").exists());
     let (_, out, _) = fael(&wt, &["find", "--files", "src/a.rs"]);

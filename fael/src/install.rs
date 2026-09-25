@@ -21,7 +21,11 @@ const CLAUDE_HOOKS: &[(&str, Option<&str>, &str)] = &[
     ("SessionStart", None, "session-start"),
     ("PostToolUse", Some("Read"), "read"),
     // every file-writing tool, or stop sees no edits (only the git fallback)
-    ("PostToolUse", Some("Edit|Write|MultiEdit|NotebookEdit"), "edit"),
+    (
+        "PostToolUse",
+        Some("Edit|Write|MultiEdit|NotebookEdit"),
+        "edit",
+    ),
 ];
 /// Codex reads through the shell — no read hook; file edits are apply_patch.
 const CODEX_HOOKS: &[(&str, Option<&str>, &str)] = &[
@@ -74,7 +78,12 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
         .map_err(|e| format!("fael install: where am I? {e}"))?
         .to_string_lossy()
         .into_owned();
-    let c = Ctx { home, exe, dry, replace };
+    let c = Ctx {
+        home,
+        exe,
+        dry,
+        replace,
+    };
     let found = |name: &str| match name {
         "claude" => c.home.join(".claude").is_dir() || on_path("claude"),
         "codex" => c.home.join(".codex").is_dir(),
@@ -82,7 +91,11 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
     };
     let targets: Vec<&str> = match client.as_deref() {
         Some(n) if CLIENTS.contains(&n) => vec![n],
-        Some(n) => return Err(format!("fael install: unknown client {n:?} — want claude|codex|opencode")),
+        Some(n) => {
+            return Err(format!(
+                "fael install: unknown client {n:?} — want claude|codex|opencode"
+            ));
+        }
         None => CLIENTS.into_iter().filter(|n| found(n)).collect(),
     };
     if targets.is_empty() {
@@ -97,7 +110,12 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
         match t {
             "claude" => {
                 claude_mcp(&c);
-                hooks_json(&c, &c.home.join(".claude/settings.json"), "claude", CLAUDE_HOOKS)?;
+                hooks_json(
+                    &c,
+                    &c.home.join(".claude/settings.json"),
+                    "claude",
+                    CLAUDE_HOOKS,
+                )?;
                 skills.push(c.home.join(".claude/skills/fael/SKILL.md"));
             }
             "codex" => {
@@ -132,12 +150,20 @@ fn is_fapony_blocker(cmd: &str) -> bool {
     cmd.contains("fapony") && (cmd.contains("hook-stop") || cmd.contains("hook-session-start"))
 }
 
-fn hooks_json(c: &Ctx, path: &Path, client: &str, want: &[(&str, Option<&str>, &str)]) -> Result<(), String> {
+fn hooks_json(
+    c: &Ctx,
+    path: &Path,
+    client: &str,
+    want: &[(&str, Option<&str>, &str)],
+) -> Result<(), String> {
     let mut root: Value = match std::fs::read_to_string(path) {
         Ok(s) => match serde_json::from_str(&s) {
             Ok(v @ Value::Object(_)) => v,
             _ => {
-                println!("  ! {} is not a JSON object — left alone, hooks not installed", path.display());
+                println!(
+                    "  ! {} is not a JSON object — left alone, hooks not installed",
+                    path.display()
+                );
                 return Ok(());
             }
         },
@@ -148,7 +174,10 @@ fn hooks_json(c: &Ctx, path: &Path, client: &str, want: &[(&str, Option<&str>, &
         .map(|o| o.entry("hooks").or_insert_with(|| json!({})))
         .and_then(Value::as_object_mut)
     else {
-        println!("  ! {} has a non-object \"hooks\" — left alone", path.display());
+        println!(
+            "  ! {} has a non-object \"hooks\" — left alone",
+            path.display()
+        );
         return Ok(());
     };
     let mut changed = vec![];
@@ -156,14 +185,19 @@ fn hooks_json(c: &Ctx, path: &Path, client: &str, want: &[(&str, Option<&str>, &
         let cmd = c.command(sub, client);
         let suffix = format!(" hook {sub} --client {client}");
         let list = hooks.entry(*event).or_insert_with(|| json!([]));
-        let Some(groups) = list.as_array_mut() else { continue };
+        let Some(groups) = list.as_array_mut() else {
+            continue;
+        };
         // ours = a fael command for this event + client, wherever it sits
         let mine = groups
             .iter_mut()
             .filter_map(|g| g.get_mut("hooks").and_then(Value::as_array_mut))
             .flatten()
             .filter_map(|h| h.get_mut("command"))
-            .find(|v| v.as_str().is_some_and(|s| s.contains("fael") && s.ends_with(&suffix)));
+            .find(|v| {
+                v.as_str()
+                    .is_some_and(|s| s.contains("fael") && s.ends_with(&suffix))
+            });
         match mine {
             Some(v) if v == &json!(cmd) => {}
             Some(v) => {
@@ -194,7 +228,10 @@ fn hooks_json(c: &Ctx, path: &Path, client: &str, want: &[(&str, Option<&str>, &
                     hs.retain(|h| !h["command"].as_str().is_some_and(is_fapony_blocker));
                     fapony += before - hs.len();
                 } else {
-                    fapony += hs.iter().filter(|h| h["command"].as_str().is_some_and(is_fapony_blocker)).count();
+                    fapony += hs
+                        .iter()
+                        .filter(|h| h["command"].as_str().is_some_and(is_fapony_blocker))
+                        .count();
                 }
             }
         }
@@ -230,20 +267,35 @@ fn claude_mcp(c: &Ctx) {
         return;
     }
     let get = |name: &str| {
-        Command::new("claude").args(["mcp", "get", name]).output().ok().filter(|o| o.status.success()).map(|o| {
-            String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr)
-        })
+        Command::new("claude")
+            .args(["mcp", "get", name])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout).into_owned()
+                    + &String::from_utf8_lossy(&o.stderr)
+            })
     };
     match get("fael") {
         Some(out) if out.contains(&c.exe) => println!("  mcp fael already set"),
-        Some(_) => println!("  ! an MCP server named fael points elsewhere — left alone; `claude mcp remove fael -s user` and rerun"),
+        Some(_) => println!(
+            "  ! an MCP server named fael points elsewhere — left alone; `claude mcp remove fael -s user` and rerun"
+        ),
         None if c.dry => println!("  would run: {add}"),
         None => {
             let ok = Command::new("claude")
                 .args(["mcp", "add", "fael", "-s", "user", "--", &c.exe, "mcp"])
                 .status()
                 .is_ok_and(|s| s.success());
-            println!("  {}", if ok { format!("ran: {add}") } else { format!("! failed: {add}") });
+            println!(
+                "  {}",
+                if ok {
+                    format!("ran: {add}")
+                } else {
+                    format!("! failed: {add}")
+                }
+            );
         }
     }
     if get("fapony").is_some() {
@@ -252,8 +304,18 @@ fn claude_mcp(c: &Ctx) {
         } else if c.dry {
             println!("  would run: claude mcp remove fapony -s user");
         } else {
-            let ok = Command::new("claude").args(["mcp", "remove", "fapony", "-s", "user"]).status().is_ok_and(|s| s.success());
-            println!("  {}", if ok { "ran: claude mcp remove fapony -s user" } else { "! failed: claude mcp remove fapony -s user" });
+            let ok = Command::new("claude")
+                .args(["mcp", "remove", "fapony", "-s", "user"])
+                .status()
+                .is_ok_and(|s| s.success());
+            println!(
+                "  {}",
+                if ok {
+                    "ran: claude mcp remove fapony -s user"
+                } else {
+                    "! failed: claude mcp remove fapony -s user"
+                }
+            );
         }
     }
 }
@@ -269,16 +331,22 @@ fn codex_mcp(c: &Ctx) -> Result<(), String> {
         s = drop_toml_table(&s, "mcp_servers.fapony");
         what.push("removed mcp_servers.fapony");
     } else if s.contains("[mcp_servers.fapony]") {
-        println!("  ! mcp_servers.fapony is still in {} — --replace-fapony removes it", path.display());
+        println!(
+            "  ! mcp_servers.fapony is still in {} — --replace-fapony removes it",
+            path.display()
+        );
     }
     if s.contains("[mcp_servers.fael]") {
         println!("  mcp fael already set");
     } else {
         // a JSON string is a valid TOML basic string
         let exe = serde_json::to_string(&c.exe).map_err(|e| e.to_string())?;
-        s = format!("{}\n\n[mcp_servers.fael]\ncommand = {exe}\nargs = [\"mcp\"]\n", s.trim_end())
-            .trim_start()
-            .to_string();
+        s = format!(
+            "{}\n\n[mcp_servers.fael]\ncommand = {exe}\nargs = [\"mcp\"]\n",
+            s.trim_end()
+        )
+        .trim_start()
+        .to_string();
         what.push("mcp_servers.fael");
     }
     if s != old {
@@ -295,7 +363,12 @@ fn drop_toml_table(s: &str, name: &str) -> String {
     for line in s.split_inclusive('\n') {
         let t = line.trim_start();
         if t.starts_with('[') {
-            let h = t.trim_start_matches('[').split(']').next().unwrap_or("").trim();
+            let h = t
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim();
             skip = h == name || h.starts_with(&format!("{name}."));
         }
         if !skip {
@@ -328,7 +401,10 @@ fn opencode(c: &Ctx) -> Result<(), String> {
             Some(i) => insert_first(&s, i, &entry),
             None => insert_first(&s, 0, &format!("\"mcp\": {{{entry}}}")),
         }
-        .ok_or(format!("{}: no JSON object to add mcp.fael to", path.display()))?;
+        .ok_or(format!(
+            "{}: no JSON object to add mcp.fael to",
+            path.display()
+        ))?;
         what.push("mcp.fael");
     }
     const OFF: &str = "\"fapony\": {\"enabled\": false,";
@@ -337,7 +413,10 @@ fn opencode(c: &Ctx) -> Result<(), String> {
             s.replace_range(i..i + "\"fapony\": {".len(), OFF);
             what.push("disabled mcp.fapony");
         } else {
-            println!("  ! mcp.fapony is still on in {} — --replace-fapony disables it", path.display());
+            println!(
+                "  ! mcp.fapony is still on in {} — --replace-fapony disables it",
+                path.display()
+            );
         }
     }
     if s != old {
@@ -350,15 +429,26 @@ fn opencode(c: &Ctx) -> Result<(), String> {
     if fp.is_file() {
         if c.replace {
             if !c.dry {
-                std::fs::rename(&fp, fp.with_extension("ts.disabled")).map_err(|e| e.to_string())?;
+                std::fs::rename(&fp, fp.with_extension("ts.disabled"))
+                    .map_err(|e| e.to_string())?;
             }
-            println!("  {} {} → .disabled", if c.dry { "would rename" } else { "renamed" }, fp.display());
+            println!(
+                "  {} {} → .disabled",
+                if c.dry { "would rename" } else { "renamed" },
+                fp.display()
+            );
         } else {
-            println!("  ! {} still runs — --replace-fapony disables it", fp.display());
+            println!(
+                "  ! {} still runs — --replace-fapony disables it",
+                fp.display()
+            );
         }
     }
     let plugin = dir.join("plugins/fael.js");
-    let body = PLUGIN.replace("__FAEL__", &serde_json::to_string(&c.exe).map_err(|e| e.to_string())?);
+    let body = PLUGIN.replace(
+        "__FAEL__",
+        &serde_json::to_string(&c.exe).map_err(|e| e.to_string())?,
+    );
     match std::fs::read_to_string(&plugin) {
         Ok(cur) if cur == body => println!("  plugin already set"),
         Ok(cur) if !cur.starts_with("// fael — generated by `fael install`") => {
@@ -405,7 +495,10 @@ mod tests {
     #[test]
     fn toml_table_drop_and_jsonc_insert() {
         let t = "a = 1\n[mcp_servers.fapony]\ncommand = \"bun\"\n[mcp_servers.fapony.env]\nX = \"1\"\n[mcp_servers.other]\nc = 2\n";
-        assert_eq!(drop_toml_table(t, "mcp_servers.fapony"), "a = 1\n[mcp_servers.other]\nc = 2\n");
+        assert_eq!(
+            drop_toml_table(t, "mcp_servers.fapony"),
+            "a = 1\n[mcp_servers.other]\nc = 2\n"
+        );
         assert_eq!(insert_first("{}", 0, "\"k\": 1").unwrap(), "{\n  \"k\": 1}");
         assert_eq!(
             insert_first("{ // c\n \"mcp\": { \"x\": {} } }", 8, "\"k\": 1").unwrap(),

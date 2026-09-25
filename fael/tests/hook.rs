@@ -19,7 +19,11 @@ fn fael(dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
     if !stdin.is_empty() {
         c.stdin(Stdio::piped());
     }
-    let mut c = c.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut c = c
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     if !stdin.is_empty() {
         c.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     }
@@ -37,7 +41,12 @@ fn repo() -> PathBuf {
         &["config", "user.email", "hook@example.com"],
     ] {
         assert!(
-            Command::new("git").args(args).current_dir(&d).status().unwrap().success()
+            Command::new("git")
+                .args(args)
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success()
         );
     }
     Command::new("git")
@@ -86,7 +95,11 @@ fn stop_blocks_commit_without_row_then_allows() {
     let _g = lock();
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
-    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "decision", "old choice", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
 
     let t = transcript(&d, "t1.jsonl");
@@ -103,7 +116,11 @@ fn stop_blocks_commit_without_row_then_allows() {
 
     // a mem row filed for the work lets the turn through (fresh state dir,
     // so this allow comes from the row and not from the dedupe above)
-    let (ok, _, err) = fael(&d, &["add", "note", "tweaked login copy", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "tweaked login copy", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
@@ -123,7 +140,11 @@ fn stop_blocks_edits_after_last_row() {
     let _g = lock();
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
-    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "decision", "old choice", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let t = transcript(&d, "t1.jsonl");
     for f in ["src/a.rs", "src/b.rs"] {
@@ -132,7 +153,9 @@ fn stop_blocks_edits_after_last_row() {
     for f in ["src/b.rs", "src/b.rs", "src/a.rs"] {
         let edit = format!(
             r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":{}}}}}"#,
-            json(&d), json(&t), json(&d.join(f))
+            json(&d),
+            json(&t),
+            json(&d.join(f))
         );
         assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
     }
@@ -143,7 +166,11 @@ fn stop_blocks_edits_after_last_row() {
 
     // a row for the work lets it through — same state dir: the dedupe is keyed
     // on the last row, and no edit follows the new one
-    let (ok, _, err) = fael(&d, &["add", "note", "b.rs added", "--files", "src/b.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "note", "b.rs added", "--files", "src/b.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
     assert!(ok && !out.contains("block"), "{out}");
@@ -152,11 +179,15 @@ fn stop_blocks_edits_after_last_row() {
     std::thread::sleep(std::time::Duration::from_millis(5));
     let edit = format!(
         r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":"src/a.rs"}}}}"#,
-        json(&d), json(&t)
+        json(&d),
+        json(&t)
     );
     assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
-    assert!(ok && out.contains("1 file(s) edited") && !out.contains("src/b.rs"), "{out}");
+    assert!(
+        ok && out.contains("1 file(s) edited") && !out.contains("src/b.rs"),
+        "{out}"
+    );
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
     assert!(ok && !out.contains("block"), "{out}");
 }
@@ -166,7 +197,11 @@ fn stop_bug_signal_needs_issue_row() {
     let _g = lock();
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
-    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "decision", "old choice", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
 
     let t = d.join("t.jsonl");
@@ -191,12 +226,23 @@ fn stop_bug_signal_needs_issue_row() {
     // state dir, so the allow comes from the row and not from the dedupe
     let (ok, out, _) = fael(&d, &["stats", "--json"], "");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert!(ok && v["stop_blocks"]["stop-bug"] == serde_json::json!({"blocks": 2, "followed_by_row": 0}), "{out}");
-    let (ok, _, err) = fael(&d, &["add", "issue", "login loops", "--files", "src/a.rs"], "");
+    assert!(
+        ok && v["stop_blocks"]["stop-bug"]
+            == serde_json::json!({"blocks": 2, "followed_by_row": 0}),
+        "{out}"
+    );
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "issue", "login loops", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     // stats sees the issue that followed the block
     let (_, out, _) = fael(&d, &["stats"], "");
-    assert!(out.contains("stop-bug: 2 block(s) → 2 followed by a row"), "{out}");
+    assert!(
+        out.contains("stop-bug: 2 block(s) → 2 followed by a row"),
+        "{out}"
+    );
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
     let (ok, out, _) = fael(&d, &["hook", "stop"], &input);
     assert!(ok && out.contains(r#""block":false"#), "{out}");
@@ -226,14 +272,25 @@ fn session_start_and_read_push() {
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     // empty log = silent, not an error
-    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], r#"{}"#);
+    let (ok, out, _) = fael(
+        &d,
+        &["hook", "session-start", "--client", "claude"],
+        r#"{}"#,
+    );
     assert!(ok && out.is_empty(), "{out}");
 
-    let (ok, _, err) = fael(&d, &["add", "issue", "login loops", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "issue", "login loops", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let input = format!(r#"{{"cwd":{}}}"#, json(&d));
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
-    assert!(ok && out.contains("SessionStart") && out.contains("login loops"), "{out}");
+    assert!(
+        ok && out.contains("SessionStart") && out.contains("login loops"),
+        "{out}"
+    );
 
     // read: claude shape in, PostToolUse context out
     let f = d.join("src/a.rs");
@@ -244,21 +301,30 @@ fn session_start_and_read_push() {
         json(&f)
     );
     let (ok, out, _) = fael(&d, &["hook", "read", "--client", "claude"], &input);
-    assert!(ok && out.contains("PostToolUse") && out.contains("login loops"), "{out}");
+    assert!(
+        ok && out.contains("PostToolUse") && out.contains("login loops"),
+        "{out}"
+    );
 
     // neutral shape: Event in, Reply out · a file outside the repo pushes nothing
     let input = format!(r#"{{"cwd":{},"files":["src/a.rs"]}}"#, json(&d));
     let (ok, out, _) = fael(&d, &["hook", "read"], &input);
     assert!(ok && out.contains("login loops"), "{out}");
     let (ok, out, _) = fael(&d, &["hook", "read"], r#"{"cwd":"/","files":["x.rs"]}"#);
-    assert!(ok && out.contains(r#""block":false"#) && !out.contains("context"), "{out}");
+    assert!(
+        ok && out.contains(r#""block":false"#) && !out.contains("context"),
+        "{out}"
+    );
 
     // every injection is accounted, per machine
     let (ok, out, _) = fael(&d, &["stats"], "");
     assert!(ok && out.contains("3 injections"), "{out}");
     let (ok, out, _) = fael(&d, &["stats", "--json"], "");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert!(ok && v["events"] == 3 && v["by_event"]["read"]["events"] == 2, "{out}");
+    assert!(
+        ok && v["events"] == 3 && v["by_event"]["read"]["events"] == 2,
+        "{out}"
+    );
 }
 
 fn json(v: &Path) -> String {
@@ -270,22 +336,32 @@ fn codex_apply_patch_edits_and_last_message() {
     let _g = lock();
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
-    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "decision", "old choice", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let t = transcript(&d, "rollout.jsonl");
     std::fs::write(d.join("src/b.rs"), "//\n").unwrap();
     let patch = "*** Begin Patch\n*** Add File: src/b.rs\n+//\n*** End Patch\n";
     let edit = serde_json::json!({"cwd": d, "transcript_path": t, "tool_name": "apply_patch",
-        "tool_input": {"command": patch}}).to_string();
+        "tool_input": {"command": patch}})
+    .to_string();
     assert!(fael(&d, &["hook", "edit", "--client", "codex"], &edit).0);
     // a bug claim in the last message is checked before the edit rule
     let stop = serde_json::json!({"cwd": d, "transcript_path": t, "stop_hook_active": false,
-        "last_assistant_message": "Found a bug: the parser is broken on empty input."}).to_string();
+        "last_assistant_message": "Found a bug: the parser is broken on empty input."})
+    .to_string();
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "codex"], &stop);
-    assert!(ok && out.contains(r#""decision":"block""#) && out.contains("issue"), "{out}");
+    assert!(
+        ok && out.contains(r#""decision":"block""#) && out.contains("issue"),
+        "{out}"
+    );
     // next turn's message is clean: the edit rule sees the apply_patch file
     let stop = serde_json::json!({"cwd": d, "transcript_path": t,
-        "last_assistant_message": "Added b.rs."}).to_string();
+        "last_assistant_message": "Added b.rs."})
+    .to_string();
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "codex"], &stop);
     assert!(ok && out.contains("--files src/b.rs"), "{out}");
 }
@@ -295,12 +371,17 @@ fn claude_notebook_edit_is_recorded() {
     let _g = lock();
     let d = repo();
     unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
-    let (ok, _, err) = fael(&d, &["add", "decision", "old choice", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "decision", "old choice", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let t = transcript(&d, "t.jsonl");
     std::fs::write(d.join("src/n.ipynb"), "{}").unwrap();
     let edit = serde_json::json!({"cwd": d, "transcript_path": t,
-        "tool_input": {"notebook_path": d.join("src/n.ipynb")}}).to_string();
+        "tool_input": {"notebook_path": d.join("src/n.ipynb")}})
+    .to_string();
     assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
     let stop = serde_json::json!({"cwd": d, "transcript_path": t}).to_string();
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &stop);

@@ -72,8 +72,11 @@ pub fn ts_ms(s: &str) -> Option<i64> {
     };
     let (d, t) = dt.split_once('T')?;
     let mut d = d.split('-');
-    let (y, mo, day): (i64, i64, i64) =
-        (d.next()?.parse().ok()?, d.next()?.parse().ok()?, d.next()?.parse().ok()?);
+    let (y, mo, day): (i64, i64, i64) = (
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+    );
     let mut t = t.split(':');
     let (h, mi): (i64, i64) = (t.next()?.parse().ok()?, t.next()?.parse().ok()?);
     let ssec = t.next()?;

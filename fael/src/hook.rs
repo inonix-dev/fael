@@ -82,10 +82,17 @@ fn neutral(event: &str, stdin: &str) -> ExitCode {
         "read" | "edit" => push(&e, event),
         _ => {
             eprintln!("fael hook: unknown event {event:?} — want stop|session-start|read|edit");
-            Reply { block: false, reason: None, context: None }
+            Reply {
+                block: false,
+                reason: None,
+                context: None,
+            }
         }
     };
-    println!("{}", serde_json::to_string(&reply).unwrap_or(r#"{"block":false}"#.into()));
+    println!(
+        "{}",
+        serde_json::to_string(&reply).unwrap_or(r#"{"block":false}"#.into())
+    );
     ExitCode::SUCCESS
 }
 
@@ -136,9 +143,14 @@ fn patch_files(patch: &str) -> Vec<String> {
     patch
         .lines()
         .filter_map(|l| {
-            ["*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "]
-                .iter()
-                .find_map(|h| l.strip_prefix(h))
+            [
+                "*** Add File: ",
+                "*** Update File: ",
+                "*** Delete File: ",
+                "*** Move to: ",
+            ]
+            .iter()
+            .find_map(|h| l.strip_prefix(h))
         })
         .map(|p| p.trim().to_string())
         .collect()
@@ -157,12 +169,19 @@ fn claude(event: &str, stdin: &str, client: &str) -> ExitCode {
                 stop_active: p.stop_hook_active,
                 // codex transcripts are not claude-format: always hand the
                 // text over, so stop never falls back to parsing the file
-                text: if codex { Some(p.last_assistant_message.unwrap_or_default()) } else { None },
+                text: if codex {
+                    Some(p.last_assistant_message.unwrap_or_default())
+                } else {
+                    None
+                },
                 client,
                 ..Event::default()
             };
             if let Some(reason) = stop(&e).reason {
-                println!("{}", serde_json::json!({"decision": "block", "reason": reason}));
+                println!(
+                    "{}",
+                    serde_json::json!({"decision": "block", "reason": reason})
+                );
             }
             ExitCode::SUCCESS
         }
@@ -223,9 +242,11 @@ struct Ctx {
 
 /// Resolve cwd → repo + log. `None` = fail open (not a repo, no cwd, …).
 fn ctx(e: &Event) -> Option<Ctx> {
-    let cwd = e.cwd.as_deref().map(PathBuf::from).or_else(|| {
-        std::env::current_dir().ok()
-    })?;
+    let cwd = e
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())?;
     let repo = repo_at(&cwd).ok()?;
     let log = read(&repo);
     Some(Ctx {
@@ -239,7 +260,11 @@ fn ctx(e: &Event) -> Option<Ctx> {
 // --- stop ---
 
 fn stop(e: &Event) -> Reply {
-    let no = || Reply { block: false, reason: None, context: None };
+    let no = || Reply {
+        block: false,
+        reason: None,
+        context: None,
+    };
     let c = match ctx(e) {
         Some(c) => c,
         None => return no(),
@@ -293,12 +318,16 @@ fn stop(e: &Event) -> Reply {
     // bug rule: a marker in the transcript tail with no issue row since start
     let bug_signal = match (&e.text, e.session.as_deref()) {
         (Some(text), _) => has_bug_marker(text),
-        (None, Some(t)) if Path::new(t).is_file() => bug_signal_from_transcript(Path::new(t), since_ms),
+        (None, Some(t)) if Path::new(t).is_file() => {
+            bug_signal_from_transcript(Path::new(t), since_ms)
+        }
         _ => None,
     };
-    let bug_row_since = c.log.rows.iter().any(|r| {
-        r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|ms| ms >= since_ms)
-    });
+    let bug_row_since = c
+        .log
+        .rows
+        .iter()
+        .any(|r| r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|ms| ms >= since_ms));
     let reason = core::decide_stop(&core::StopFacts {
         stop_active: false,
         edits,
@@ -319,9 +348,17 @@ fn stop(e: &Event) -> Reply {
     }
     // the reason lands in context like any push; stats reads these back to
     // count how many blocks were followed by a row
-    let event = if kind.starts_with("bug:") { "stop-bug" } else { "stop-work" };
+    let event = if kind.starts_with("bug:") {
+        "stop-bug"
+    } else {
+        "stop-work"
+    };
     record_usage(&c.client, event, root, &reason, &[]);
-    Reply { block: true, reason: Some(reason), context: None }
+    Reply {
+        block: true,
+        reason: Some(reason),
+        context: None,
+    }
 }
 
 /// Floor to whole seconds for `git log --since` — flooring can only include
@@ -335,7 +372,9 @@ fn walk_jsonl(dir: &Path) -> impl Iterator<Item = PathBuf> {
     let mut stack = vec![dir.to_path_buf()];
     std::iter::from_fn(move || {
         while let Some(d) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -355,7 +394,9 @@ fn stop_blocked_before(session: &str, worktree: &str, kind: &str) -> bool {
     if session.is_empty() {
         return false;
     }
-    let path = state_dir().join("stop-block").join(format!("{}.jsonl", session_key(session)));
+    let path = state_dir()
+        .join("stop-block")
+        .join(format!("{}.jsonl", session_key(session)));
     if let Ok(s) = std::fs::read_to_string(&path) {
         for line in s.lines() {
             let v: serde_json::Value = match serde_json::from_str(line) {
@@ -412,7 +453,9 @@ fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
     let scheme = f.split(':').next().unwrap_or("");
     if scheme.len() >= 2
         && scheme.as_bytes()[0].is_ascii_lowercase()
-        && scheme.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
+        && scheme
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
     {
         f.to_string()
     } else {
@@ -431,10 +474,17 @@ fn edits_path(session: &str, root: &Path) -> PathBuf {
 /// One `{"path","at"}` line per edit event, in order — (path, at ms). A torn
 /// or unreadable line is skipped; any error is an empty list.
 fn session_edits(path: &Path) -> Vec<(String, i64)> {
-    let Ok(s) = std::fs::read_to_string(path) else { return vec![] };
+    let Ok(s) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
     s.lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter_map(|v| Some((v["path"].as_str()?.to_string(), core::ts_ms(v["at"].as_str()?)?)))
+        .filter_map(|v| {
+            Some((
+                v["path"].as_str()?.to_string(),
+                core::ts_ms(v["at"].as_str()?)?,
+            ))
+        })
         .collect()
 }
 
@@ -475,7 +525,11 @@ const ISSUE_LINE: &str = "- fael: saw something broken, inconsistent or likely t
 `fael add issue \"<what>\" --files <path>` right there — do not wait for the end of the task";
 
 fn session_start(e: &Event) -> Reply {
-    let no = || Reply { block: false, reason: None, context: None };
+    let no = || Reply {
+        block: false,
+        reason: None,
+        context: None,
+    };
     let c = match ctx(e) {
         Some(c) => c,
         None => return no(),
@@ -508,7 +562,11 @@ fn session_start(e: &Event) -> Reply {
         &context,
         &rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
     );
-    Reply { block: false, reason: None, context: Some(context) }
+    Reply {
+        block: false,
+        reason: None,
+        context: Some(context),
+    }
 }
 
 fn check_ignore_hit(root: &Path) -> bool {
@@ -523,7 +581,11 @@ fn check_ignore_hit(root: &Path) -> bool {
 // --- read / edit push ---
 
 fn push(e: &Event, event: &str) -> Reply {
-    let no = || Reply { block: false, reason: None, context: None };
+    let no = || Reply {
+        block: false,
+        reason: None,
+        context: None,
+    };
     let c = match ctx(e) {
         Some(c) => c,
         None => return no(),
@@ -544,7 +606,8 @@ fn push(e: &Event, event: &str) -> Reply {
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string())
         });
-        if let Ok(mut n) = core::normalize_files(std::slice::from_ref(&f), &c.repo.cwd, &c.repo.root)
+        if let Ok(mut n) =
+            core::normalize_files(std::slice::from_ref(&f), &c.repo.cwd, &c.repo.root)
         {
             files.append(&mut n);
         }
@@ -569,7 +632,11 @@ fn push(e: &Event, event: &str) -> Reply {
         &context,
         &rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
     );
-    Reply { block: false, reason: None, context: Some(context) }
+    Reply {
+        block: false,
+        reason: None,
+        context: Some(context),
+    }
 }
 
 // --- usage + stats (SPEC §8) ---
@@ -635,13 +702,31 @@ pub fn stats(json: bool) -> Result<(), String> {
         let ev = v["event"].as_str().unwrap_or("?").to_string();
         let cl = v["client"].as_str().unwrap_or("?").to_string();
         if ev.starts_with("stop-")
-            && let (Some(repo), Some(ms)) = (v["repo"].as_str(), v["ts"].as_str().and_then(core::ts_ms))
+            && let (Some(repo), Some(ms)) =
+                (v["repo"].as_str(), v["ts"].as_str().and_then(core::ts_ms))
         {
             blocks.push((repo.to_string(), ev.clone(), ms));
         }
-        by_event.entry(ev).and_modify(|e| { e.0 += 1; e.1 += t; }).or_insert((1, t));
-        by_client.entry(cl).and_modify(|e| { e.0 += 1; e.1 += t; }).or_insert((1, t));
-        for id in v["ids"].as_array().into_iter().flatten().filter_map(|i| i.as_str()) {
+        by_event
+            .entry(ev)
+            .and_modify(|e| {
+                e.0 += 1;
+                e.1 += t;
+            })
+            .or_insert((1, t));
+        by_client
+            .entry(cl)
+            .and_modify(|e| {
+                e.0 += 1;
+                e.1 += t;
+            })
+            .or_insert((1, t));
+        for id in v["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.as_str())
+        {
             *by_id.entry(id.into()).or_insert(0) += 1;
         }
     }
@@ -658,7 +743,9 @@ pub fn stats(json: bool) -> Result<(), String> {
             .entry(repo.clone())
             .or_insert_with(|| core::read(&Path::new(repo).join(".fael")));
         let followed = if ev == "stop-bug" {
-            log.rows.iter().any(|r| r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|t| t >= *ms))
+            log.rows
+                .iter()
+                .any(|r| r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|t| t >= *ms))
         } else {
             core::last_row_ms(log, *ms).is_some()
         };
@@ -670,7 +757,10 @@ pub fn stats(json: bool) -> Result<(), String> {
         let top: Vec<_> = {
             let mut v: Vec<_> = by_id.iter().collect();
             v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-            v.into_iter().take(10).map(|(id, c)| serde_json::json!({"id": id, "pushes": c})).collect()
+            v.into_iter()
+                .take(10)
+                .map(|(id, c)| serde_json::json!({"id": id, "pushes": c}))
+                .collect()
         };
         println!(
             "{}",
@@ -684,7 +774,13 @@ pub fn stats(json: bool) -> Result<(), String> {
         );
         return Ok(());
     }
-    println!("fael usage ({}): {} injections · {} bytes · ~{} tokens into context", path.display(), n, bytes, toks);
+    println!(
+        "fael usage ({}): {} injections · {} bytes · ~{} tokens into context",
+        path.display(),
+        n,
+        bytes,
+        toks
+    );
     let mut ev: Vec<_> = by_event.iter().collect();
     ev.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     for (k, (c, t)) in ev {
@@ -729,13 +825,7 @@ const BUG_PHRASES_LATIN: [&str; 12] = [
 ];
 
 /// Thai phrases are caseless — they match in the lowercased haystack too.
-const BUG_PHRASES_THAI: [&str; 5] = [
-    "เจอบั๊ก",
-    "พบว่าเป็นบั๊ก",
-    "เจอว่าเป็นบั๊ก",
-    "บั๊กที่เจอ",
-    "บั๊กที่พบ",
-];
+const BUG_PHRASES_THAI: [&str; 5] = ["เจอบั๊ก", "พบว่าเป็นบั๊ก", "เจอว่าเป็นบั๊ก", "บั๊กที่เจอ", "บั๊กที่พบ"];
 
 const NEGATIONS: [&str; 7] = ["ไม่", "จะ", "ถ้า", "อาจ", "not", "no", "if"];
 
@@ -792,7 +882,10 @@ fn has_bug_marker(text: &str) -> Option<String> {
     let mut from = 0;
     while let Some(i) = lower[from..].find("bug") {
         let i = from + i;
-        if word_boundary(&lower, i, 3) && colon_after(&lower, i + 3) && !negated(&lower, i, &NEGATIONS) {
+        if word_boundary(&lower, i, 3)
+            && colon_after(&lower, i + 3)
+            && !negated(&lower, i, &NEGATIONS)
+        {
             return Some("bug:".to_string());
         }
         from = i + 3;
@@ -828,18 +921,30 @@ fn colon_after(s: &str, mut i: usize) -> bool {
         }
     }
     // a colon before the line ends
-    s[i..].split('\n').next().is_some_and(|l| l.trim_end().ends_with(':'))
+    s[i..]
+        .split('\n')
+        .next()
+        .is_some_and(|l| l.trim_end().ends_with(':'))
 }
 
 /// The ~15 chars before the match end in a negation word.
 fn negated(lower: &str, i: usize, negations: &[&str]) -> bool {
-    let before: String =
-        lower[..i].chars().rev().take(15).collect::<String>().chars().rev().collect();
+    let before: String = lower[..i]
+        .chars()
+        .rev()
+        .take(15)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     let t = before.trim_end().to_lowercase();
     negations.iter().any(|n| {
         t.ends_with(n)
             && (n.chars().all(|c| !c.is_ascii_alphabetic())
-                || t[..t.len() - n.len()].chars().last().is_none_or(|c| !c.is_alphabetic()))
+                || t[..t.len() - n.len()]
+                    .chars()
+                    .last()
+                    .is_none_or(|c| !c.is_alphabetic()))
     })
 }
 
@@ -929,7 +1034,13 @@ mod tests {
         ] {
             assert!(has_bug_marker(hit).is_some(), "{hit}");
         }
-        for miss in ["no bug found", "no mismatch left", "ไม่มีความเสี่ยง", "ถ้าเจอบั๊กให้บอก", "all tests pass"] {
+        for miss in [
+            "no bug found",
+            "no mismatch left",
+            "ไม่มีความเสี่ยง",
+            "ถ้าเจอบั๊กให้บอก",
+            "all tests pass",
+        ] {
             assert!(has_bug_marker(miss).is_none(), "{miss}");
         }
     }

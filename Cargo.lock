@@ -59,7 +59,6 @@ dependencies = [
  "fael-core",
  "serde",
  "serde_json",
- "toml",
 ]
 
 [[package]]
@@ -70,6 +69,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "toml",
 ]
 
 [[package]]

@@ -144,7 +144,12 @@ fn brief_puts_issues_then_decisions_then_notes() {
 #[test]
 fn push_ranks_exact_then_dir_then_key() {
     let l = log();
-    let q = |f: &[&str]| ids(&push(&l, &f.iter().map(|s| s.to_string()).collect::<Vec<_>>()));
+    let q = |f: &[&str]| {
+        ids(&push(
+            &l,
+            &f.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        ))
+    };
     // src/a.rs: 14 exact, 13 same dir (src/c.rs); 10 closed and 11 superseded never push
     assert_eq!(q(&["src/a.rs"]), ["14", "13"]);
     // a directory query is a zone: everything under src/, issues first
@@ -164,13 +169,10 @@ fn push_shares_key_with_exact_hit() {
         &["elsewhere/z.rs"],
         Some("auth:session"), // same key as the exact hit 14
     ));
-    let got: Vec<String> = push(
-        &l,
-        &["src/a.rs".to_string()],
-    )
-    .iter()
-    .map(|r| r.id[24..].to_string())
-    .collect();
+    let got: Vec<String> = push(&l, &["src/a.rs".to_string()])
+        .iter()
+        .map(|r| r.id[24..].to_string())
+        .collect();
     assert_eq!(got, ["14", "13", "16"]);
 }
 

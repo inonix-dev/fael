@@ -39,13 +39,11 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
     if let Some(marker) = &f.bug_signal
         && !f.bug_row_since
     {
-        return Some(
-            format!(
-                "This turn reported a problem (\"{marker}\") but no issue row exists for this session.\n\
+        return Some(format!(
+            "This turn reported a problem (\"{marker}\") but no issue row exists for this session.\n\
                  Record it before ending: fael add issue \"<what is broken or at risk>\" --files <files>\n\
                  Already filed, or not a problem? End the turn again — this fires once per session."
-            ),
-        );
+        ));
     }
     // Work rule: files edited since the last row (or, failing that, commits
     // with no row at all this session).
@@ -54,11 +52,21 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
     }
     // markdown like render(): one `- ` line per item, --files prefilled
     let (what, items, files) = if f.edits.is_empty() {
-        (format!("{} commit(s)", f.commits.len()), &f.commits, "<files>".to_string())
+        (
+            format!("{} commit(s)", f.commits.len()),
+            &f.commits,
+            "<files>".to_string(),
+        )
     } else {
-        (format!("{} file(s) edited", f.edits.len()), &f.edits, f.edits.join(","))
+        (
+            format!("{} file(s) edited", f.edits.len()),
+            &f.edits,
+            f.edits.join(","),
+        )
     };
-    let mut out = vec![format!("{what} this session with no mem row for this work:")];
+    let mut out = vec![format!(
+        "{what} this session with no mem row for this work:"
+    )];
     out.extend(items.iter().take(10).map(|c| format!("- {c}")));
     if items.len() > 10 {
         out.push(format!("- … +{} more", items.len() - 10));
@@ -101,7 +109,13 @@ mod tests {
 
     #[test]
     fn allows_everything_unknown() {
-        assert!(decide_stop(&StopFacts { stop_active: true, ..facts() }).is_none());
+        assert!(
+            decide_stop(&StopFacts {
+                stop_active: true,
+                ..facts()
+            })
+            .is_none()
+        );
         assert!(
             decide_stop(&StopFacts {
                 commits: vec![],
@@ -139,11 +153,24 @@ mod tests {
             ..facts()
         })
         .unwrap();
-        assert!(r.contains("2 file(s) edited") && r.contains("\n- src/a.rs"), "{r}");
-        assert!(r.contains("--files src/a.rs,src/b.rs") && !r.contains("abc123"), "{r}");
+        assert!(
+            r.contains("2 file(s) edited") && r.contains("\n- src/a.rs"),
+            "{r}"
+        );
+        assert!(
+            r.contains("--files src/a.rs,src/b.rs") && !r.contains("abc123"),
+            "{r}"
+        );
         // edits arrive filtered to after the last row — a row earlier in the
         // session does not excuse them
-        assert!(decide_stop(&StopFacts { edits: vec!["a".into()], new_row: true, ..facts() }).is_some());
+        assert!(
+            decide_stop(&StopFacts {
+                edits: vec!["a".into()],
+                new_row: true,
+                ..facts()
+            })
+            .is_some()
+        );
     }
 
     #[test]

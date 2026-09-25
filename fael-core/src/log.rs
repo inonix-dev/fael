@@ -1,7 +1,7 @@
 //! Reading and appending `.fael/log/**` (format.md §Layout, §Writers, §Readers).
 //! Reads never fail and take no lock; appends hold `.fael/.lock` and write one whole line.
 
-use crate::{Config, Row, validate, validate_close};
+use crate::{Config, Row, Stamp, closed, resolve, validate, validate_close, warnings};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -102,6 +102,48 @@ pub fn add(fael: &Path, row: &Row, cfg: &Config) -> Result<PathBuf, String> {
 pub fn close(fael: &Path, row: &Row, cfg: &Config) -> Result<PathBuf, String> {
     validate_close(row, cfg)?;
     append(fael, row, true)
+}
+
+/// Resolve `supersedes`, stamp, validate, append — the one add path every adapter (CLI, MCP,
+/// a server) goes through. `row.files` must already be normalised. Returns the non-fatal warnings.
+pub fn add_row(
+    fael: &Path,
+    log: &Log,
+    cfg: &Config,
+    stamp: &Stamp,
+    mut row: Row,
+    supersedes: Option<&str>,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    if let Some(s) = supersedes {
+        row.supersedes = Some(resolve(log, s)?.id.clone());
+    }
+    stamp.apply(&mut row);
+    let path = add(fael, &row, cfg)?;
+    let warns = warnings(&row, log, cfg);
+    Ok((row, path, warns))
+}
+
+/// Resolve `id`, stamp, validate, append a close row. Closing twice is a warning, not a reject.
+pub fn close_row(
+    fael: &Path,
+    log: &Log,
+    cfg: &Config,
+    stamp: &Stamp,
+    id: &str,
+    why: &str,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    let target = resolve(log, id)?;
+    let mut warns = vec![];
+    if closed(log).contains(target.id.as_str()) {
+        warns.push(format!(
+            "fael: {} is already closed — closing it again",
+            target.id
+        ));
+    }
+    let mut row = Row::close(&stamp.by, &target.id, why);
+    stamp.apply(&mut row);
+    let path = close(fael, &row, cfg)?;
+    Ok((row, path, warns))
 }
 
 /// Append without validating (import/compact write already-checked rows through here).

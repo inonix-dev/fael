@@ -8,7 +8,6 @@ mod install;
 mod mcp;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -139,8 +138,14 @@ pub(crate) fn repo_at(cwd: &Path) -> Result<Repo, String> {
     // ponytail: walk up for `.git` (dir, or file for worktree/submodule) instead
     // of spawning `git rev-parse` — that spawn was ~13 of a hook's ~15 ms.
     // Ignores GIT_DIR/GIT_WORK_TREE/core.worktree; spawn git if those matter.
-    let find = |name: &str| cwd.ancestors().find(|d| d.join(name).exists()).map(Path::to_path_buf);
-    let root = find(".git").or_else(|| find(".fael")).unwrap_or_else(|| cwd.clone());
+    let find = |name: &str| {
+        cwd.ancestors()
+            .find(|d| d.join(name).exists())
+            .map(Path::to_path_buf)
+    };
+    let root = find(".git")
+        .or_else(|| find(".fael"))
+        .unwrap_or_else(|| cwd.clone());
     let fael = root.join(".fael");
     let cfg = config(&fael.join("config.toml"))?;
     Ok(Repo {
@@ -161,48 +166,12 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Option<String> {
     (o.status.success() && !s.is_empty()).then_some(s)
 }
 
-/// `.fael/config.toml` — every field optional; missing file = defaults, a broken file = error.
+/// `.fael/config.toml` — missing file = defaults, a broken file = error.
 fn config(path: &Path) -> Result<Config, String> {
-    #[derive(Deserialize, Default)]
-    #[serde(default)]
-    struct File {
-        kinds: Vec<String>,
-        key_domains: Vec<String>,
-        budget: Budget,
-        warn: Warn,
-        limit: Limit,
-    }
-    #[derive(Deserialize, Default)]
-    #[serde(default)]
-    struct Budget {
-        kickoff_tokens: Option<usize>,
-        find_tokens: Option<usize>,
-        push_tokens: Option<usize>,
-    }
-    #[derive(Deserialize, Default)]
-    #[serde(default)]
-    struct Warn {
-        row_tokens: Option<usize>,
-    }
-    #[derive(Deserialize, Default)]
-    #[serde(default)]
-    struct Limit {
-        row_bytes: Option<usize>,
-    }
     let Ok(s) = std::fs::read_to_string(path) else {
         return Ok(Config::default());
     };
-    let f: File = toml::from_str(&s).map_err(|e| format!("{}: {e}", path.display()))?;
-    let d = Config::default();
-    Ok(Config {
-        kinds: f.kinds,
-        key_domains: f.key_domains,
-        row_bytes: f.limit.row_bytes.unwrap_or(d.row_bytes),
-        kickoff_tokens: f.budget.kickoff_tokens.unwrap_or(d.kickoff_tokens),
-        find_tokens: f.budget.find_tokens.unwrap_or(d.find_tokens),
-        push_tokens: f.budget.push_tokens.unwrap_or(d.push_tokens),
-        warn_row_tokens: f.warn.row_tokens.unwrap_or(d.warn_row_tokens),
-    })
+    Config::from_toml(&s).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Read the log; skipped lines go to stderr as one summary, never fail the command.
@@ -231,13 +200,12 @@ fn writer(r: &Repo) -> String {
     core::writer_id(&name, email.as_deref(), &host)
 }
 
-/// `branch` and `sha` are filled in here — never asked of the agent.
-fn stamp(row: &mut Row, r: &Repo) {
-    if let Some(b) = git(&r.root, &["symbolic-ref", "--short", "-q", "HEAD"]) {
-        row.extra.insert("branch".into(), b.into());
-    }
-    if let Some(s) = git(&r.root, &["rev-parse", "--short", "HEAD"]) {
-        row.extra.insert("sha".into(), s.into());
+/// Writer, branch and sha from git — never asked of the agent.
+fn stamp(r: &Repo) -> core::Stamp {
+    core::Stamp {
+        by: writer(r),
+        branch: git(&r.root, &["symbolic-ref", "--short", "-q", "HEAD"]),
+        sha: git(&r.root, &["rev-parse", "--short", "HEAD"]),
     }
 }
 
@@ -265,7 +233,7 @@ fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Normalise, stamp, validate, append — shared by the CLI and MCP. Returns the non-fatal warnings.
+/// Normalise files against cwd, then core's add path — shared by the CLI and MCP.
 fn add_row(
     r: &Repo,
     kind: &str,
@@ -275,16 +243,10 @@ fn add_row(
     supersedes: Option<String>,
 ) -> Result<(Row, PathBuf, Vec<String>), String> {
     let files = core::normalize_files(files, &r.cwd, &r.root)?;
-    let mut row = Row::new(&writer(r), kind, text, files);
+    let st = stamp(r);
+    let mut row = Row::new(&st.by, kind, text, files);
     row.key = key;
-    let log = read(r);
-    if let Some(s) = supersedes {
-        row.supersedes = Some(core::resolve(&log, &s)?.id.clone());
-    }
-    stamp(&mut row, r);
-    let path = core::add(&r.fael, &row, &r.cfg)?;
-    let warns = core::warnings(&row, &log, &r.cfg);
-    Ok((row, path, warns))
+    core::add_row(&r.fael, &read(r), &r.cfg, &st, row, supersedes.as_deref())
 }
 
 fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
@@ -296,19 +258,7 @@ fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
 }
 
 fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>), String> {
-    let log = read(r);
-    let target = core::resolve(&log, id)?;
-    let mut warns = vec![];
-    if core::closed(&log).contains(target.id.as_str()) {
-        warns.push(format!(
-            "fael: {} is already closed — closing it again",
-            target.id
-        ));
-    }
-    let mut row = Row::close(&writer(r), &target.id, why);
-    stamp(&mut row, r);
-    let path = core::close(&r.fael, &row, &r.cfg)?;
-    Ok((row, path, warns))
+    core::close_row(&r.fael, &read(r), &r.cfg, &stamp(r), id, why)
 }
 
 fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
@@ -323,17 +273,8 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
         all: a.has("all"),
     };
     let log = read(&r);
-    let (rows, budget) = query(&r, &log, &f);
+    let (rows, budget) = core::query(&log, &f, &r.cfg);
     show(a, &log, &rows, budget)
-}
-
-/// No filter = the session brief under the kickoff budget; otherwise find under the find budget.
-fn query<'a>(r: &Repo, log: &'a Log, f: &Filter) -> (Vec<&'a Row>, usize) {
-    if f.is_empty() && !f.all {
-        (core::brief(log, f), r.cfg.kickoff_tokens)
-    } else {
-        (core::find(log, f), r.cfg.find_tokens)
-    }
 }
 
 fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
