@@ -91,6 +91,8 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 | `fael mcp` | MCP server on stdio |
 | `fael install [--dry-run]` | detect installed clients and wire MCP, hooks and skill into each one |
 | `fael compact` · `fael import <path> [--map old/=new/]` | maintenance |
+| `fael doctor [--fix]` | find and repair damaged logs — `--fix` moves bad lines to quarantine, it never deletes them |
+| `fael stats` | how many bytes and tokens fael has put into agents' context |
 
 ### MCP (3 tools — each schema is paid for in every session, so the list stays short)
 
@@ -156,10 +158,15 @@ Reading needs no checkout. Rows are written only to your own branch and reach `m
 Tokens are the unit of value, and they are spent when reading, not when storing. So:
 
 - Storage is JSON, so any tool can parse it and it merges cleanly in git.
-- What an agent is shown (kickoff, push, `find`) is a compact table format — the header once, then one line per row.
-- Every output is cut to a token budget. The estimate is computed at read time and never stored, because every model's tokenizer counts differently.
+- What an agent is shown (kickoff, push, `find`) is one markdown line per row: `- [id] kind #key text → files`. On real rows this adds 18.5% on top of the text, against 42.6% for raw JSON and 17.7% for TOON. The text is most of the size, so the savings come from choosing fewer rows, not from the format.
+- Every output is cut to a token budget (configurable per repo). The estimate is computed at read time and never stored, because every model's tokenizer counts differently. The estimator is calibrated in tests against real tokenizers, and its error is published.
+- Every injection is recorded per machine (`~/.local/state/fael/usage.jsonl`, never in git), so `fael stats` shows fael's real cost in context.
 - A row longer than about 400 estimated tokens triggers a warning when it is written, because it is paid for every time it is pushed. The hard limit is 10 KiB per row.
 
-## 6. Non-goals
+## 6. Self-healing
+
+Reading never fails: broken lines, leftover merge-conflict markers, duplicate ids, CRLF and BOM are all handled in memory. Writing seals a torn last line before it appends. `fael doctor` reports problems, and `--fix` repairs them with tmp-then-rename. Bad lines go to `.fael/quarantine/`, so no byte is ever deleted.
+
+## 7. Non-goals
 
 A query language, a daemon or server, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
