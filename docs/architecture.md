@@ -102,7 +102,7 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael close <id> "<why>"` | append a close row |
 | `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
-| `fael kickoff [anchor]` | the session brief: open issues, recent decisions, rows on other branches |
+| `fael kickoff [anchor]` | the session brief: open issues, then the rest by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
 | `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |

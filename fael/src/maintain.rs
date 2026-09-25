@@ -3,19 +3,64 @@
 //! in `fael-core` so a hosted server calls the same entry points.
 
 use crate::{Args, core, repo};
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 pub fn doctor(a: &Args) -> Result<ExitCode, String> {
     let r = repo()?;
     let month = core::current_month();
+    let source = crate::hook::ignore_source(&r.root);
+    let excluded = source.as_deref().is_some_and(crate::hook::deliberate);
+    let ignored = source.is_some() && !excluded;
     if a.has("fix") {
-        let before = core::doctor_scan(&r.fael, &r.root, git_ignored(&r.root), &month);
+        let before = core::doctor_scan(&r.fael, &r.root, ignored, &month);
         for action in core::doctor_fix(&r.fael, &r.root, &before)? {
             println!("fixed: {action}");
         }
     }
-    let rep = core::doctor_scan(&r.fael, &r.root, git_ignored(&r.root), &month);
+    let mut rep = core::doctor_scan(&r.fael, &r.root, ignored, &month);
+    if excluded {
+        rep.problems.push(core::Problem {
+            kind: core::ProblemKind::Ignored,
+            severity: core::Severity::Info,
+            fixable: false,
+            file: None,
+            detail: ".fael/log is kept local by .git/info/exclude — taken as deliberate; \
+                     move the pattern to .gitignore if it is not"
+                .into(),
+        });
+    }
+    let log = crate::read(&r);
+    let gone: Vec<_> = core::find(&log, &core::Filter::default())
+        .into_iter()
+        .filter(|row| core::gone(&r.root, row))
+        .collect();
+    if !gone.is_empty() {
+        let w = core::abbrev(&log);
+        let eg: Vec<String> = gone
+            .iter()
+            .take(5)
+            .map(|row| {
+                format!(
+                    "{} → {}",
+                    &row.id[..w.min(row.id.len())],
+                    row.files.join(", ")
+                )
+            })
+            .collect();
+        rep.problems.push(core::Problem {
+            kind: core::ProblemKind::Gone,
+            severity: core::Severity::Info,
+            fixable: false,
+            file: None,
+            detail: format!(
+                "{} open row(s) name only files that no longer exist, so they never push — \
+                 re-file them on the new path or `fael close` them (e.g. {})",
+                gone.len(),
+                eg.join("; ")
+            ),
+        });
+    }
     show(&rep, a.has("json"));
     Ok(if rep.errors().count() > 0 {
         ExitCode::FAILURE
@@ -61,17 +106,6 @@ fn show(rep: &core::DoctorReport, json: bool) {
         let fix = if p.fixable { " [--fix]" } else { "" };
         println!("{sev} [{:?}]{fix}: {}", p.kind, p.detail);
     }
-}
-
-/// `git check-ignore` straight at git — `doctor` runs rarely, so no cache
-/// like the session-start hook keeps (that one lies in wait on every start).
-fn git_ignored(root: &Path) -> bool {
-    Command::new("git")
-        .args(["check-ignore", "-q", ".fael/log"])
-        .current_dir(root)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 pub fn compact(a: &Args) -> Result<ExitCode, String> {

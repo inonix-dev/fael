@@ -95,6 +95,15 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
     out
 }
 
+/// Every file the row names is a path that no longer exists under `root` (anchors never go).
+/// A row with no files is never gone. Such rows never push, so kickoff drops them too.
+pub fn gone(root: &std::path::Path, r: &Row) -> bool {
+    !r.files.is_empty()
+        && r.files
+            .iter()
+            .all(|f| anchor(f).is_none() && !root.join(f).exists())
+}
+
 /// The session brief (kickoff, and `find` with no filter): open issues, then decisions, then
 /// notes, then repo kinds — newest first inside each.
 pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
@@ -107,6 +116,36 @@ pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
         _ => 3,
     });
     rows
+}
+
+/// What a session opens with (`fael kickoff`, the session-start hook): the brief minus
+/// rows whose files are gone, open issues first, then everything else by how fresh it is —
+/// the newer of the row itself and the last change to any of its files. So an old decision
+/// about a file nobody touches sinks, and one about the file changed yesterday rises.
+// ponytail: file mtime is the "current work" signal — no git spawn on session start; a fresh
+// clone or checkout resets mtimes, then the order falls back to roughly newest-row first.
+pub fn kickoff<'a>(log: &'a Log, f: &Filter, root: &std::path::Path) -> Vec<&'a Row> {
+    let fresh = |r: &Row| {
+        let row_ms = crate::ts_ms(&r.ts).unwrap_or(0);
+        r.files
+            .iter()
+            .filter_map(|f| {
+                std::fs::metadata(root.join(f))
+                    .and_then(|m| m.modified())
+                    .ok()
+            })
+            .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .fold(row_ms, i64::max)
+    };
+    let mut rows: Vec<(&Row, i64)> = find(log, f)
+        .into_iter()
+        .filter(|r| !gone(root, r))
+        .map(|r| (r, fresh(r)))
+        .collect();
+    // find() is newest-id first, and the stable sort keeps that for ties
+    rows.sort_by_key(|(r, ms)| (r.kind != "issue", std::cmp::Reverse(*ms)));
+    rows.into_iter().map(|(r, _)| r).collect()
 }
 
 /// The read/edit push: rows about `files`, ranked so the most actionable comes

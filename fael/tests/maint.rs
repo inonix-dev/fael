@@ -41,6 +41,7 @@ fn doctor_fails_without_union_then_fix_repairs() {
     let (ok, out, _) = fael(&d, &["doctor"]);
     assert!(ok && out.contains("1 problem(s)"), "{out}");
     // adopt fael without the union line: error, exit 1
+    std::fs::write(d.join("src/a.rs"), "").unwrap();
     let (ok, _, _) = fael(&d, &["add", "note", "first row", "--files", "src/a.rs"]);
     assert!(ok);
     let (ok, out, _) = fael(&d, &["doctor"]);
@@ -51,6 +52,30 @@ fn doctor_fails_without_union_then_fix_repairs() {
     assert!(d.join(".gitattributes").exists());
     let (ok, out, _) = fael(&d, &["doctor"]);
     assert!(ok && out.contains("clean"), "{out}");
+    // excluded locally on purpose: a note, not an error; in .gitignore: an error
+    std::fs::write(d.join(".git/info/exclude"), ".fael/log/\n").unwrap();
+    let (ok, out, _) = fael(&d, &["doctor"]);
+    assert!(ok && out.contains("note [Ignored]"), "{out}");
+    std::fs::write(d.join(".gitignore"), ".fael/log/\n").unwrap();
+    std::fs::write(d.join(".git/info/exclude"), "").unwrap();
+    let (ok, out, _) = fael(&d, &["doctor"]);
+    assert!(!ok && out.contains("error [Ignored]"), "{out}");
+    // an open row on a deleted file is reported, never an error
+    fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            "on a gone file",
+            "--files",
+            "src/deleted.rs",
+        ],
+    );
+    let (_, out, _) = fael(&d, &["doctor"]);
+    assert!(
+        out.contains("note [Gone]: 1 open row(s)") && out.contains("src/deleted.rs"),
+        "{out}"
+    );
 }
 
 #[test]

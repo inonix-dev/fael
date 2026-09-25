@@ -77,6 +77,9 @@ fn add_find_close_round_trip() {
     assert!(out.is_empty() && err.contains("no rows match"), "{out}");
     let (_, out, _) = fael(&d, &["find", "--all", "--files", "src/a.rs"]);
     assert!(out.contains("issue (closed)"), "{out}");
+    // --json --all carries the close row too, so a consumer can tell it is closed
+    let (_, out, _) = fael(&d, &["find", "--json", "--all", "--files", "src/a.rs"]);
+    assert!(out.contains(&format!("\"ref\":\"{id}\"")), "{out}");
 
     let (_, out, _) = fael(&d, &["keys"]);
     assert_eq!(
@@ -88,6 +91,60 @@ fn add_find_close_round_trip() {
     );
     let (ok, _, _) = fael(&d, &["kickoff", "src/a.rs"]);
     assert!(ok);
+
+    // kickoff drops rows whose files are all gone; find still has them
+    std::fs::write(d.join("src/live.rs"), "").unwrap();
+    fael(
+        &d,
+        &[
+            "add",
+            "note",
+            "about a deleted file",
+            "--files",
+            "src/gone.rs",
+        ],
+    );
+    fael(
+        &d,
+        &["add", "note", "about a live file", "--files", "src/live.rs"],
+    );
+    let (_, out, _) = fael(&d, &["kickoff"]);
+    assert!(
+        out.contains("live file") && !out.contains("deleted file"),
+        "{out}"
+    );
+    let (_, out, _) = fael(&d, &["find", "deleted"]);
+    assert!(out.contains("deleted file"), "{out}");
+
+    // freshness: a row on a file changed just now outranks a newer row on an untouched one;
+    // open issues stay on top
+    std::fs::write(d.join("src/old.rs"), "").unwrap();
+    fael(
+        &d,
+        &["add", "decision", "about old.rs", "--files", "src/old.rs"],
+    );
+    fael(
+        &d,
+        &[
+            "add",
+            "decision",
+            "about untouched",
+            "--files",
+            "src/live.rs",
+        ],
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(d.join("src/old.rs"), "changed").unwrap();
+    fael(&d, &["add", "issue", "open bug", "--files", "src/live.rs"]);
+    let (_, out, _) = fael(&d, &["kickoff"]);
+    let at = |t: &str| out.find(t).unwrap_or_else(|| panic!("{t} missing: {out}"));
+    assert!(
+        at("open bug") < at("about old.rs") && at("about old.rs") < at("about untouched"),
+        "{out}"
+    );
+
+    let (ok, out, _) = fael(&d, &["--version"]);
+    assert!(ok && out.starts_with("fael "), "{out}");
 }
 
 #[test]

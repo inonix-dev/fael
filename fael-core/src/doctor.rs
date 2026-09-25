@@ -34,6 +34,8 @@ pub enum Kind {
     NoLog,
     Future,
     Oversize,
+    /// open rows whose files all no longer exist — they never push again
+    Gone,
 }
 
 #[derive(Debug, Clone)]

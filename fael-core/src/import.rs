@@ -256,7 +256,9 @@ fn legacy(
         .get("files")
         .and_then(Value::as_array)
         .is_none_or(|a| a.is_empty())
-        && m.get("text").and_then(Value::as_str).is_some_and(|t| !t.trim().is_empty());
+        && m.get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|t| !t.trim().is_empty());
     let spec = m
         .get("spec")
         .and_then(Value::as_str)
