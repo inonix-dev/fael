@@ -3,6 +3,7 @@
 //! `--json` prints one JSON row per line, uncut, for programs. `fael mcp` serves the same
 //! add/close/find over stdio (see mcp.rs).
 
+mod hook;
 mod mcp;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
@@ -16,13 +17,15 @@ const USAGE: &str = "usage:
   fael close <id> \"<why>\"
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
   fael keys [glob]
-  fael kickoff [file|anchor]
-  fael mcp                      MCP server on stdio
-every command takes --json";
+   fael kickoff [file|anchor]
+   fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
+   fael stats                  tokens fael has put into context, per machine
+   fael mcp                      MCP server on stdio
+ every command takes --json";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("{e}");
             ExitCode::FAILURE
@@ -30,17 +33,19 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(argv: Vec<String>) -> Result<(), String> {
+fn run(argv: Vec<String>) -> Result<ExitCode, String> {
     let a = Args::parse(argv)?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
     let rest = a.pos.get(1..).unwrap_or_default();
     match (cmd, rest) {
-        ("add", [kind, text]) => add(&a, kind, text),
-        ("close", [id, why]) => close(&a, id, why),
-        ("find", [] | [_]) => find(&a, rest.first()),
-        ("keys", [] | [_]) => keys(&a, rest.first()),
-        ("kickoff", [] | [_]) => kickoff(&a, rest.first()),
-        ("mcp", []) => mcp::serve(),
+        ("add", [kind, text]) => add(&a, kind, text).map(|()| ExitCode::SUCCESS),
+        ("close", [id, why]) => close(&a, id, why).map(|()| ExitCode::SUCCESS),
+        ("find", [] | [_]) => find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("keys", [] | [_]) => keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
+        ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
+        ("mcp", []) => mcp::serve().map(|()| ExitCode::SUCCESS),
         _ => Err(USAGE.into()),
     }
 }
@@ -75,7 +80,7 @@ impl Args {
                 "all" | "json" => {
                     a.flags.entry(name).or_default();
                 }
-                "files" | "key" | "supersedes" | "kind" | "since" | "by" => {
+                "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -109,18 +114,24 @@ impl Args {
     }
 }
 
-struct Repo {
-    root: PathBuf,
-    cwd: PathBuf,
-    fael: PathBuf,
-    cfg: Config,
+pub(crate) struct Repo {
+    pub(crate) root: PathBuf,
+    pub(crate) cwd: PathBuf,
+    pub(crate) fael: PathBuf,
+    pub(crate) cfg: Config,
 }
 
-fn repo() -> Result<Repo, String> {
+pub(crate) fn repo() -> Result<Repo, String> {
     let cwd = std::env::current_dir()
         .and_then(|d| d.canonicalize())
         .map_err(|e| format!("cwd: {e}"))?;
+    repo_at(&cwd)
+}
+
+/// The same resolution from an explicit directory — what hooks pass.
+pub(crate) fn repo_at(cwd: &Path) -> Result<Repo, String> {
     // normalize_files is lexical, so root must be symlink-resolved like cwd
+    let cwd = cwd.canonicalize().map_err(|e| format!("cwd: {e}"))?;
     let root = git(&cwd, &["rev-parse", "--show-toplevel"])
         .and_then(|r| PathBuf::from(r).canonicalize().ok())
         .or_else(|| {
@@ -139,7 +150,7 @@ fn repo() -> Result<Repo, String> {
     })
 }
 
-fn git(dir: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let o = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -165,6 +176,7 @@ fn config(path: &Path) -> Result<Config, String> {
     struct Budget {
         kickoff_tokens: Option<usize>,
         find_tokens: Option<usize>,
+        push_tokens: Option<usize>,
     }
     #[derive(Deserialize, Default)]
     #[serde(default)]
@@ -187,12 +199,13 @@ fn config(path: &Path) -> Result<Config, String> {
         row_bytes: f.limit.row_bytes.unwrap_or(d.row_bytes),
         kickoff_tokens: f.budget.kickoff_tokens.unwrap_or(d.kickoff_tokens),
         find_tokens: f.budget.find_tokens.unwrap_or(d.find_tokens),
+        push_tokens: f.budget.push_tokens.unwrap_or(d.push_tokens),
         warn_row_tokens: f.warn.row_tokens.unwrap_or(d.warn_row_tokens),
     })
 }
 
 /// Read the log; skipped lines go to stderr as one summary, never fail the command.
-fn read(r: &Repo) -> Log {
+pub(crate) fn read(r: &Repo) -> Log {
     let log = core::read(&r.fael);
     if let Some(first) = log.warnings.first() {
         eprintln!(

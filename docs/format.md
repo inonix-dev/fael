@@ -35,7 +35,7 @@ Reference implementation: [`fael-core`](../fael-core/src).
 |---|---|---|
 | `v` | yes | `1` |
 | `id` | yes | writers emit a [ULID](https://github.com/ulid/spec); readers accept any unique string |
-| `ts` | yes | RFC 3339 UTC. For humans — order comes from `id`, never `ts` |
+| `ts` | yes | RFC 3339 UTC, always with millis (`2026-09-25T10:00:00.123Z`) — recency compares run at ms precision, so a row filed just before a session start never reads as newer. Readers accept with or without millis. For humans — order comes from `id`, never `ts` |
 | `by` | yes | writer id |
 | `kind` | yes | `decision` · `issue` · `note`, or a kind listed in `config.toml` `kinds = [...]` |
 | `text` | yes | non-empty, written to stand alone |

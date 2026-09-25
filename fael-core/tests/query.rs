@@ -142,6 +142,39 @@ fn brief_puts_issues_then_decisions_then_notes() {
 }
 
 #[test]
+fn push_ranks_exact_then_dir_then_key() {
+    let l = log();
+    let q = |f: &[&str]| ids(&push(&l, &f.iter().map(|s| s.to_string()).collect::<Vec<_>>()));
+    // src/a.rs: 14 exact, 13 same dir (src/c.rs); 10 closed and 11 superseded never push
+    assert_eq!(q(&["src/a.rs"]), ["14", "13"]);
+    // a directory query is a zone: everything under src/, issues first
+    assert_eq!(q(&["src"]), ["13", "14", "12"]);
+    // anchors push only on exact ref
+    assert_eq!(q(&["doc:pricing/2026"]), ["15"]);
+    assert!(q(&["doc:pricing"]).is_empty());
+    assert!(push(&l, &[]).is_empty());
+}
+
+#[test]
+fn push_shares_key_with_exact_hit() {
+    let mut l = log();
+    l.rows.push(row(
+        "C0000000000000000000000016",
+        "note",
+        &["elsewhere/z.rs"],
+        Some("auth:session"), // same key as the exact hit 14
+    ));
+    let got: Vec<String> = push(
+        &l,
+        &["src/a.rs".to_string()],
+    )
+    .iter()
+    .map(|r| r.id[24..].to_string())
+    .collect();
+    assert_eq!(got, ["14", "13", "16"]);
+}
+
+#[test]
 fn redis_glob() {
     assert!(glob("auth:*", "auth:session:timeout"));
     assert!(glob("a?c", "abc") && !glob("a?c", "ac"));

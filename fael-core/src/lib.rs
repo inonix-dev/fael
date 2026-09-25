@@ -1,14 +1,17 @@
 //! fael-core — the log format (docs/format.md): row v1, validate, read, append under lock.
 //! Knows the row format, never a client. The CLI, MCP and hooks sit on top of this.
 
+mod hook;
 mod id;
 mod log;
 mod query;
 
-pub use id::{now_ms, rfc3339, ulid, ulid_at, writer_id};
+pub use hook::{StopFacts, decide_stop, has_new_row};
+
+pub use id::{now_ms, rfc3339, ts_ms, ulid, ulid_at, writer_id};
 pub use log::{Log, MONTH_MAX, add, append, close, parse, read};
 pub use query::{
-    Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, keys, render, resolve,
+    Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, keys, push, render, resolve,
     superseded, warnings,
 };
 
@@ -100,6 +103,8 @@ pub struct Config {
     pub kickoff_tokens: usize,
     /// Token budget for `find` output.
     pub find_tokens: usize,
+    /// Token budget for the read/edit hook push.
+    pub push_tokens: usize,
     /// Warn when a row's text is estimated over this many tokens.
     pub warn_row_tokens: usize,
 }
@@ -112,6 +117,7 @@ impl Default for Config {
             key_domains: vec![],
             kickoff_tokens: 800,
             find_tokens: 800,
+            push_tokens: 800,
             warn_row_tokens: 400,
         }
     }

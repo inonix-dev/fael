@@ -109,6 +109,81 @@ pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
     rows
 }
 
+/// The read/edit push: rows about `files`, ranked so the most actionable comes
+/// first — exact file, then same directory, then rows sharing a key with an
+/// exact hit. Open `issue` before `decision` before the rest, newest first by
+/// `id` inside each. Closed and superseded rows never push. Deterministic: the
+/// same log and query give the same order on any machine. The caller cuts the
+/// result to the push budget with `render`.
+pub fn push<'a>(log: &'a Log, files: &[String]) -> Vec<&'a Row> {
+    let hide: HashSet<&str> = closed(log).union(&superseded(log)).copied().collect();
+    let queries: Vec<String> = files
+        .iter()
+        .map(|q| lenient(q).trim_end_matches('/').to_string())
+        .collect();
+    if queries.is_empty() {
+        return vec![];
+    }
+    // keys of the exact hits — tier 2 shares one of these
+    let mut hit_keys: HashSet<&str> = HashSet::new();
+    for r in &log.rows {
+        if hide.contains(r.id.as_str()) {
+            continue;
+        }
+        let rf: Vec<String> = r.files.iter().map(|f| lenient(f)).collect();
+        if queries.iter().any(|q| rf.iter().any(|f| zone(q, f))) {
+            hit_keys.extend(r.key.as_deref());
+        }
+    }
+    let tier = |r: &Row| {
+        let rf: Vec<String> = r.files.iter().map(|f| lenient(f)).collect();
+        if queries.iter().any(|q| rf.iter().any(|f| zone(q, f))) {
+            return 0;
+        }
+        if queries.iter().any(|q| rf.iter().any(|f| same_dir(q, f))) {
+            return 1;
+        }
+        if r.key.as_deref().is_some_and(|k| hit_keys.contains(k)) {
+            return 2;
+        }
+        3
+    };
+    let mut out: Vec<&Row> = log
+        .rows
+        .iter()
+        .filter(|r| !hide.contains(r.id.as_str()) && tier(r) < 3)
+        .collect();
+    // newest first, then stable sort keeps it inside each rank
+    out.sort_by(|a, b| b.id.cmp(&a.id));
+    out.sort_by_key(|r| {
+        (
+            tier(r),
+            match r.kind.as_str() {
+                "issue" => 0,
+                "decision" => 1,
+                _ => 2,
+            },
+        )
+    });
+    out
+}
+
+/// Exact or under the directory (a zone) — an anchor's ref is opaque, never a zone.
+fn zone(q: &str, f: &str) -> bool {
+    f == q || (anchor(q).is_none() && f.starts_with(q) && f.as_bytes().get(q.len()) == Some(&b'/'))
+}
+
+/// Same directory: both are paths (never anchors) with equal parent dirs.
+fn same_dir(q: &str, f: &str) -> bool {
+    if anchor(q).is_some() || anchor(f).is_some() {
+        return false;
+    }
+    fn dir(s: &str) -> &str {
+        s.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
+    }
+    dir(q) == dir(f)
+}
+
 /// Readers accept legacy spellings: `\` separators and a leading `./`.
 fn lenient(f: &str) -> String {
     let mut s = f.trim().replace('\\', "/");
