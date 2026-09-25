@@ -319,14 +319,15 @@ fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
     let r = repo()?;
     let files = core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?;
     let log = read(&r);
+    let al = aliases::load(&r, &log, true);
     let f = Filter {
-        files: aliases::load(&r, &log, true).expand_all(&files),
+        files: al.expand_all(&files),
         ..Filter::default()
     };
     show(
         a,
         &log,
-        &core::kickoff(&log, &f, &r.root),
+        &core::kickoff(&log, &f, &r.root, &al),
         r.cfg.kickoff_tokens,
     )
 }

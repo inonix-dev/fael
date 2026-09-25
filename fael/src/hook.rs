@@ -543,9 +543,10 @@ fn session_start(e: &Event) -> Reply {
         None => return no(),
     };
     // once per session: pick up renames committed since the last session, so
-    // the read/edit push (which never spawns git) resolves them
-    aliases::load(&c.repo, &c.log, true);
-    let rows = core::kickoff(&c.log, &Filter::default(), &c.repo.root);
+    // the read/edit push (which never spawns git) resolves them — and kickoff
+    // keeps rows whose files were merely renamed
+    let al = aliases::load(&c.repo, &c.log, true);
+    let rows = core::kickoff(&c.log, &Filter::default(), &c.repo.root, &al);
     let adopted = c.repo.fael.join("log").is_dir();
     let mut context = match (rows.is_empty(), adopted) {
         (true, false) => None,

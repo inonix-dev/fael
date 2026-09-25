@@ -178,6 +178,53 @@ fn push_shares_key_with_exact_hit() {
 }
 
 #[test]
+fn gone_resolves_renames_before_calling_a_file_missing() {
+    let r = std::env::temp_dir().join(format!("fael-gone-{}", ulid()));
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(r.join("b.rs"), "x").unwrap();
+    std::fs::write(r.join("c.rs"), "x").unwrap();
+    let al = Aliases::from_pairs(vec![
+        ("a.rs".to_string(), "b.rs".to_string()),
+        ("x.rs".to_string(), "y.rs".to_string()), // chain link 1
+        ("y.rs".to_string(), "c.rs".to_string()), // chain link 2
+    ]);
+    // renamed and present under the new path: not gone (chunk 2)
+    assert!(!gone(&r, &row("A0000000000000000000000010", "note", &["a.rs"], None), &al));
+    // same row without the resolver: gone, the pre-chunk-2 behaviour
+    assert!(gone(
+        &r,
+        &row("A0000000000000000000000010", "note", &["a.rs"], None),
+        &Aliases::default()
+    ));
+    // rename chain resolves to the end: x.rs lives at c.rs now
+    assert!(!gone(&r, &row("A0000000000000000000000011", "note", &["x.rs"], None), &al));
+    // no alias and no file: still gone
+    assert!(gone(&r, &row("A0000000000000000000000012", "note", &["del.rs"], None), &al));
+    // renamed but the new path is missing too: still gone
+    let al2 = Aliases::from_pairs(vec![("old.rs".to_string(), "gone2.rs".to_string())]);
+    assert!(gone(&r, &row("A0000000000000000000000013", "note", &["old.rs"], None), &al2));
+    // anchors and file-less rows never go
+    assert!(!gone(&r, &row("A0000000000000000000000014", "note", &["doc:x"], None), &al));
+    assert!(!gone(&r, &row("A0000000000000000000000015", "note", &[], None), &al));
+}
+
+#[test]
+fn kickoff_keeps_rows_whose_files_were_renamed() {
+    let r = std::env::temp_dir().join(format!("fael-kick-{}", ulid()));
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(r.join("b.rs"), "x").unwrap();
+    let l = Log {
+        rows: vec![row("A0000000000000000000000010", "note", &["a.rs"], None)],
+        closes: vec![],
+        warnings: vec![],
+    };
+    let al = Aliases::from_pairs(vec![("a.rs".to_string(), "b.rs".to_string())]);
+    assert!(kickoff(&l, &Filter::default(), &r, &al).iter().any(|x| x.id == "A0000000000000000000000010"));
+    // without the resolver the moved row is dropped, as before
+    assert!(kickoff(&l, &Filter::default(), &r, &Aliases::default()).is_empty());
+}
+
+#[test]
 fn redis_glob() {
     assert!(glob("auth:*", "auth:session:timeout"));
     assert!(glob("a?c", "abc") && !glob("a?c", "ac"));

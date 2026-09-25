@@ -198,6 +198,48 @@ fn no_renames_still_writes_the_cache_at_head() {
     assert!(cache.contains(&head), "{cache}");
 }
 
+fn doctor(d: &Path) -> String {
+    let (_, out, _) = fael(d, &["doctor"], "");
+    out
+}
+
+#[test]
+fn kickoff_keeps_rows_after_rename() {
+    // chunk 1 fixed push/find; kickoff used to drop the moved row (chunk 2)
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    let id = add(&d, "src/a.rs");
+
+    git(&d, &["mv", "src/a.rs", "src/b.rs"]);
+    commit_all(&d, "rename a to b");
+
+    let (ok, out, err) = fael(&d, &["kickoff"], "");
+    assert!(ok, "{err}");
+    assert!(out.contains(&id[..8]), "{out}");
+}
+
+#[test]
+fn doctor_gone_only_for_truly_missing_files() {
+    let _g = lock();
+    // a deleted file (no rename anywhere): Gone is reported …
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    add(&d, "src/a.rs");
+    git(&d, &["rm", "-q", "src/a.rs"]);
+    commit_all(&d, "delete a");
+    assert!(doctor(&d).contains("[Gone]"));
+
+    // … but a renamed file resolves through the alias, so no Gone
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    add(&d, "src/a.rs");
+    git(&d, &["mv", "src/a.rs", "src/b.rs"]);
+    commit_all(&d, "rename a to b");
+    let out = doctor(&d);
+    assert!(!out.contains("[Gone]"), "{out}");
+}
+
 #[test]
 fn non_ascii_rename_pushes_at_the_new_path() {
     // without -z git C-quotes these names and the pair never matches (01M3CTVA2)
