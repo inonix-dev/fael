@@ -1,13 +1,11 @@
 //! Session-start kickoff + gitignore warning, and the read push (each row
 //! once per session).
 
-use super::{fael, json, lock, repo, state};
+use super::{fael, json, repo};
 
 #[test]
 fn session_start_and_read_push() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     // empty log = silent, not an error
     let (ok, out, _) = fael(
         &d,

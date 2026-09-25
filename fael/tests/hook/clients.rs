@@ -1,13 +1,11 @@
 //! Client shapes: codex apply_patch edits + last message, claude
 //! NotebookEdit paths.
 
-use super::{fael, lock, repo, state, transcript};
+use super::{fael, repo, transcript};
 
 #[test]
 fn codex_apply_patch_edits_and_last_message() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     let (ok, _, err) = fael(
         &d,
         &["add", "decision", "old choice", "--files", "src/a.rs"],
@@ -40,9 +38,7 @@ fn codex_apply_patch_edits_and_last_message() {
 
 #[test]
 fn claude_notebook_edit_is_recorded() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     let (ok, _, err) = fael(
         &d,
         &["add", "decision", "old choice", "--files", "src/a.rs"],

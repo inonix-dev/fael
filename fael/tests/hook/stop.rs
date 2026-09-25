@@ -1,13 +1,11 @@
 //! Stop-event blocks: commits without a row, edits after the last row, bug
 //! signals without an issue row — and fail-open on garbage.
 
-use super::{commit, fael, json, lock, repo, state, transcript};
+use super::{commit, fael, fael_at, json, repo, state, transcript};
 
 #[test]
 fn stop_blocks_commit_without_row_then_allows() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     let (ok, _, err) = fael(
         &d,
         &["add", "decision", "old choice", "--files", "src/a.rs"],
@@ -35,24 +33,22 @@ fn stop_blocks_commit_without_row_then_allows() {
         "",
     );
     assert!(ok, "{err}");
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
-    let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
+    let s2 = state(&d).join("s2");
+    let (ok, out, _) = fael_at(&s2, &d, &["hook", "stop", "--client", "claude"], &input);
     assert!(ok && !out.contains("block"), "{out}");
 
     // a new session with a new commit and no row blocks again
     let t = transcript(&d, "t2.jsonl");
     commit(&d, "tweak again");
     let input = format!(r#"{{"cwd":{},"session":{}}}"#, json(&d), json(&t));
-    let (ok, out, _) = fael(&d, &["hook", "stop"], &input);
+    let (ok, out, _) = fael_at(&s2, &d, &["hook", "stop"], &input);
     assert!(ok && out.contains(r#""block":true"#), "{out}");
 }
 
 #[test]
 fn stop_blocks_edits_after_last_row() {
     // agents told never to commit: the edit hook's list is the work signal
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     let (ok, _, err) = fael(
         &d,
         &["add", "decision", "old choice", "--files", "src/a.rs"],
@@ -107,9 +103,7 @@ fn stop_blocks_edits_after_last_row() {
 
 #[test]
 fn stop_bug_signal_needs_issue_row() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     let (ok, _, err) = fael(
         &d,
         &["add", "decision", "old choice", "--files", "src/a.rs"],
@@ -156,16 +150,13 @@ fn stop_bug_signal_needs_issue_row() {
         out.contains("stop-bug: 2 block(s) → 2 followed by a row"),
         "{out}"
     );
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
-    let (ok, out, _) = fael(&d, &["hook", "stop"], &input);
+    let (ok, out, _) = fael_at(&state(&d).join("s2"), &d, &["hook", "stop"], &input);
     assert!(ok && out.contains(r#""block":false"#), "{out}");
 }
 
 #[test]
 fn stop_fails_open() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d)) };
     // garbage in, no repoadopted log, already-fired hook — all allow, all exit 0
     let (ok, out, _) = fael(&d, &["hook", "stop"], "not json");
     assert!(ok && out.contains(r#""block":false"#), "{out}");

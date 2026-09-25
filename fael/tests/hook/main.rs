@@ -1,5 +1,5 @@
-//! `fael hook` + `fael stats` against throwaway git repos. Hook tests share
-//! `FAEL_STATE_DIR`, which is process-global, so every test holds `LOCK`.
+//! `fael hook` + `fael stats` against throwaway git repos. Each child gets its
+//! own `FAEL_STATE_DIR` through `Command::env`, so the tests run in parallel.
 //!
 //! Thin entry only — the suites sit next to this file:
 //! `stop` (turn-end blocks), `session` (session-start + read push),
@@ -13,18 +13,15 @@ mod stop;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
-
-static LOCK: Mutex<()> = Mutex::new(());
-
-fn lock() -> std::sync::MutexGuard<'static, ()> {
-    // a failed test must not poison the rest — each test sets its own env anyway
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 fn fael(dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
+    fael_at(&state(dir), dir, args, stdin)
+}
+
+/// `fael` with an explicit state dir — for tests that switch to a fresh one.
+fn fael_at(state: &Path, dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
-    c.args(args).current_dir(dir);
+    c.args(args).current_dir(dir).env("FAEL_STATE_DIR", state);
     if !stdin.is_empty() {
         c.stdin(Stdio::piped());
     }
