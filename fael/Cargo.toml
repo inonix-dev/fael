@@ -4,6 +4,8 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
+repository = "https://github.com/inonix-dev/fael"
+homepage = "https://github.com/inonix-dev/fael"
 description = "fael CLI — a repo's memory that agents can't skip writing"
 
 [dependencies]
