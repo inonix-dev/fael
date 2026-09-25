@@ -267,3 +267,60 @@ fn writer_id_hides_email() {
         "never starts with _"
     );
 }
+
+#[test]
+fn files_normalised_to_repo_relative() {
+    let (root, cwd) = (PathBuf::from("/r/repo"), PathBuf::from("/r/repo/src"));
+    let n = |f: &str| normalize_files(&[f.to_string()], &cwd, &root);
+    assert_eq!(n("auth.rs").unwrap(), ["src/auth.rs"]); // relative = from cwd
+    assert_eq!(n("./auth.rs").unwrap(), ["src/auth.rs"]);
+    assert_eq!(n("../docs//a.md").unwrap(), ["docs/a.md"]);
+    assert_eq!(n("/r/repo/src/x.rs").unwrap(), ["src/x.rs"]); // hooks send absolute paths
+    assert_eq!(n("sub\\win.rs").unwrap(), ["src/sub/win.rs"]);
+    assert_eq!(n(" doc:pricing ").unwrap(), ["doc:pricing"]);
+    assert_eq!(n("issue:#12").unwrap(), ["issue:#12"]);
+    for bad in [
+        "../../etc/passwd",
+        "/etc/passwd",
+        "/r/repo2/a.rs",
+        "..",
+        "/r/repo",
+    ] {
+        assert!(n(bad).unwrap_err().contains("outside the repo"), "{bad}");
+    }
+    let win = normalize_files(
+        &["C:\\w\\repo\\a.rs".into()],
+        &PathBuf::from("C:\\w\\repo"),
+        &PathBuf::from("C:\\w\\repo"),
+    );
+    assert_eq!(win.unwrap(), ["a.rs"]);
+}
+
+#[test]
+fn validate_rejects_non_canonical_files() {
+    for bad in [
+        "./a.rs",
+        "../a.rs",
+        "/abs/a.rs",
+        "C:/a.rs",
+        "a\\b.rs",
+        "a//b.rs",
+        "a/./b.rs",
+        "a/",
+    ] {
+        let e = validate(&row("note", &[bad]), &Config::default()).unwrap_err();
+        assert!(e.contains("not repo-relative"), "{bad}: {e}");
+    }
+    for ok in [
+        "a.rs",
+        "src/a.rs",
+        ".github/ci.yml",
+        "doc:pricing",
+        "issue:#12",
+    ] {
+        assert!(
+            validate(&row("note", &[ok]), &Config::default()).is_ok(),
+            "{ok}"
+        );
+    }
+}

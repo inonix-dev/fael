@@ -9,6 +9,7 @@ pub use log::{Log, MONTH_MAX, add, append, close, parse, read};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::path::Path;
 
 /// Core kinds with fixed meaning; a repo adds more through `Config::kinds`.
 pub const CORE_KINDS: [&str; 3] = ["decision", "issue", "note"];
@@ -114,6 +115,11 @@ pub fn validate(row: &Row, cfg: &Config) -> Result<(), String> {
     if row.files.is_empty() || row.files.iter().any(|f| f.trim().is_empty()) {
         return Err("rejected: files is required — name the file(s) this is about".into());
     }
+    if let Some(f) = row.files.iter().find(|f| !canonical(f)) {
+        return Err(format!(
+            "rejected: files entry {f:?} is not repo-relative — write it like src/auth.rs (no ./, .., absolute path or \\); run it through normalize_files first"
+        ));
+    }
     if let Some(k) = &row.key {
         valid_key(k)?;
     }
@@ -146,6 +152,74 @@ fn check_common(row: &Row, cfg: &Config) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// `scheme:ref` anchor (`doc:pricing`, `issue:#12`): a scheme of ≥ 2 chars `[a-z0-9+.-]`, starting
+/// with a letter, before the first `:` and before any `/`. Two chars minimum so `C:` stays a drive.
+fn anchor(f: &str) -> bool {
+    f.split_once(':').is_some_and(|(s, _)| {
+        s.len() >= 2
+            && s.as_bytes()[0].is_ascii_lowercase()
+            && s.bytes()
+                .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
+    })
+}
+
+fn absolute(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with('/')
+        || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/')
+}
+
+/// The canonical form `validate` accepts: an anchor, or `/`-separated segments with no
+/// empty, `.` or `..` segment, no `\\` and no leading `/` or drive.
+fn canonical(f: &str) -> bool {
+    anchor(f)
+        || (!f.contains('\\')
+            && !absolute(f)
+            && f.split('/').all(|s| !s.is_empty() && s != "." && s != ".."))
+}
+
+/// Turn what a client sent into repo-relative paths — the one normalisation every adapter uses
+/// before `add`, so CLI, MCP and hooks can't drift apart. `cwd` and `root` are absolute;
+/// a relative entry is read from `cwd`. Anchors pass through. Outside the repo = `Err`.
+// ponytail: lexical only — a symlinked root (/tmp vs /private/tmp) must be passed already resolved
+pub fn normalize_files(files: &[String], cwd: &Path, root: &Path) -> Result<Vec<String>, String> {
+    let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let root_s = slash(root);
+    let root_segs: Vec<&str> = root_s.split('/').filter(|s| !s.is_empty()).collect();
+    let cwd_s = slash(cwd);
+    files
+        .iter()
+        .map(|f| {
+            let f = f.trim();
+            if anchor(f) {
+                return Ok(f.to_string());
+            }
+            let p = f.replace('\\', "/");
+            let full = if absolute(&p) {
+                p
+            } else {
+                format!("{cwd_s}/{p}")
+            };
+            let mut segs: Vec<&str> = vec![];
+            for s in full.split('/') {
+                match s {
+                    "" | "." => {}
+                    ".." => {
+                        segs.pop();
+                    }
+                    s => segs.push(s),
+                }
+            }
+            match segs.strip_prefix(root_segs.as_slice()) {
+                Some(rel) if !rel.is_empty() => Ok(rel.join("/")),
+                _ => Err(format!(
+                    "rejected: {f:?} is outside the repo ({root_s}) — name a file inside it"
+                )),
+            }
+        })
+        .collect()
 }
 
 /// Redis-style key: `:`-separated segments of `[a-z0-9._-]+`, ≤ 64 chars, lowercase only.

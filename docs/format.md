@@ -39,7 +39,7 @@ Reference implementation: [`fael-core`](../fael-core/src).
 | `by` | yes | writer id |
 | `kind` | yes | `decision` · `issue` · `note`, or a kind listed in `config.toml` `kinds = [...]` |
 | `text` | yes | non-empty, written to stand alone |
-| `files` | yes, ≥ 1 | repo paths, or `scheme:ref` anchors (`issue:#12`, `doc:pricing`) |
+| `files` | yes, ≥ 1 | repo-relative paths (`src/a.rs` — never `./`, `..`, absolute or `\`), or `scheme:ref` anchors (`issue:#12`, `doc:pricing`; scheme ≥ 2 chars `[a-z0-9+.-]`) |
 | `key` | no | `:`-separated segments of `[a-z0-9._-]+`, ≤ 64 chars, e.g. `auth:session:timeout` |
 | `supersedes` | no | id of an older row this one replaces |
 | `client` `model` `session` `branch` `sha` | no | filled in by tools, never by the agent |
@@ -54,7 +54,10 @@ Reference implementation: [`fael-core`](../fael-core/src).
 
 ## Writers
 
-A writer must reject a row before writing it when: `files` is empty · `kind` is not allowed ·
+**Write contract ≠ read contract.** Writers v1 must follow every rule below; readers must accept anything
+that parses (§Readers) — including legacy rows without `files` and rows from newer versions.
+
+A writer must reject a row before writing it when: `files` is empty or not repo-relative · `kind` is not allowed ·
 `key` breaks the pattern · the serialised line is over 10 KiB (bytes) · it looks like a secret.
 
 To append:
@@ -75,8 +78,9 @@ Reading never fails. Take no lock; for every `*.jsonl` under `log/`:
 - ignore the text after the last `\n` (a write in progress or a torn write)
 - skip blank lines and merge-conflict markers (`<<<<<<<` `=======` `|||||||` `>>>>>>>`) — keep the rows on both sides
 - skip a line that isn't a JSON object, or whose known fields have the wrong type, and report `file:line`
-- **keep every field and kind you don't know**, and write them back unchanged
+- **keep every field and kind you don't know**, and write them back unchanged — readers are forward-compatible and lossless
 - drop duplicate `id`s, keeping the first in path order (a union merge duplicates lines)
 - a row without `files` (legacy) is valid to read
+- compare `files` after turning `\` into `/` and dropping a leading `./` — legacy rows were not normalised
 
 A row is hidden by default when a close row's `ref` names it, it has a `closed` field, or another row `supersedes` it.

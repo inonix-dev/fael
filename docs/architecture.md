@@ -22,7 +22,7 @@ Three ideas carry the whole design:
 │                                                                    │
 │   adapters            core                         log             │
 │   ─────────           ────                         ───             │
-│   CLI         ──┐     validate · append ──────▶   .fael/log/**    │
+│   CLI         ──┐     normalize·validate·append ▶ .fael/log/**    │
 │   MCP (stdio) ──┼──▶  find · rank · budget ◀────  (jsonl, in git) │
 │   hook        ──┘     decide (block / context)                     │
 │    ├ claude                                                        │
@@ -36,7 +36,7 @@ Three ideas carry the whole design:
 |---|---|---|
 | **log** | stores rows — the only source of truth | nothing (plain files) |
 | **core** | validates, appends, finds, ranks, decides | the row format · never a client |
-| **adapters** | turn each client's input/output into core calls | one client each · never the rules |
+| **adapters** | turn each client's input/output into core calls | one client each · never the rules — paths go through `core.normalize`, never an adapter's own cleanup |
 
 Adding a client touches only an adapter. Changing a rule touches only core. Changing the format is a spec change.
 
@@ -54,7 +54,7 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
   .lock                        not in git — serialises local writers
 ```
 
-- `<writer>` = `<git user.name slug>-<4 hex of sha256(email)>` — the same person on two machines shares a folder, and two people who share a name do not.
+- `<writer>` = `<git user.name slug>-<4 hex of sha256(email)>` — a writer is a **logical author, not a machine**: the same person on two machines shares a folder (their appends meet in git via union merge), and two people who share a name do not.
 - One file per month: last month's file is never written again, so rotation needs no command.
 - `.gitattributes`: `.fael/log/**/*.jsonl merge=union` — two branches that both appended keep both sides; readers remove the duplicates by `id`.
 
@@ -67,8 +67,8 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 
 - `id` is a ULID — time-sortable, and it never collides across machines.
 - `kind` is `decision`, `issue` or `note`, plus any kinds the repo declares in `config.toml`.
-- `files` must name at least one file (or anchor such as `doc:pricing`). This is enforced.
-- `key` uses Redis-style names (`auth:session:timeout`) and is queried with glob patterns (`auth:*`).
+- `files` is fael's **locality index** — it is what makes memory come to the agent, and why fael needs no tags, links or graph. At least one repo-relative path (or anchor such as `doc:pricing`) is enforced.
+- `key` is optional — a row with only `files` is complete. When used it is a stable namespace with Redis-style names (`auth:session:timeout`) and is queried with glob patterns (`auth:*`).
 - A close is its own row, written to the `.close.jsonl` file. It never edits the row it closes.
 
 **Write safety:**
@@ -86,7 +86,7 @@ Adding a client touches only an adapter. Changing a rule touches only core. Chan
 | `fael add <kind> "<text>" --files a,b [--key k] [--supersedes id]` | append a row |
 | `fael close <id> "<why>"` | append a close row |
 | `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
-| `fael keys [glob]` | list keys, with a count and last use for each — check here before you invent a new key |
+| `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
 | `fael kickoff [anchor]` | the session brief: open issues, recent decisions, rows on other branches |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
@@ -120,17 +120,18 @@ The hook always exits 0. If fael hits an internal error it replies with an empty
 
 **Write** — an agent records something:
 ```
-agent ─(MCP add | CLI add)─▶ core.validate ─✗─▶ error that says how to fix the call
-                                  │✓
-                                  ▼
-                   lock ─▶ append one line ─▶ unlock      (.fael/log/<writer>/<month>.jsonl)
+agent ─(MCP add | CLI add | hook)─▶ core.normalize ─▶ core.validate ─✗─▶ error that says how to fix the call
+                                                          │✓
+                                                          ▼
+                                       lock ─▶ append one line ─▶ unlock      (.fael/log/<writer>/<month>.jsonl)
 ```
 
 **Push** — the agent reads a file, and the memory for that file comes with it:
 ```
 client ─(read event)─▶ adapter.parse ─▶ core.find(files) ─▶ rank ─▶ cut to token budget ─▶ adapter.render ─▶ context attached to the read
 ```
-Ranking: an exact file match beats the same directory, which beats the same key. Open `issue` and `decision` rows go first, and older rows are weighted down.
+Ranking: an exact file match beats the same directory, which beats the same key. Open `issue` and `decision` rows go first, then newer before older by `id`. Text matching is plain substring.
+Ranking is **deterministic**: the same log, query and budget give the same output on any machine and any day — recency comes from `id` order, never from the clock, and ties break by `id`. No fuzzy, BM25 or semantic ranking.
 
 **Enforce** — the agent tries to end a turn:
 ```
@@ -161,7 +162,7 @@ Tokens are the unit of value, and they are spent when reading, not when storing.
 - Storage is JSON, so any tool can parse it and it merges cleanly in git.
 - What an agent is shown (kickoff, push, `find`) is one markdown line per row: `- [id] kind #key text → files`. On real rows this adds 18.5% on top of the text, against 42.6% for raw JSON and 17.7% for TOON. The text is most of the size, so the savings come from choosing fewer rows, not from the format.
 - Every output is cut to a token budget (configurable per repo). The estimate is computed at read time and never stored, because every model's tokenizer counts differently. The estimator is calibrated in tests against real tokenizers, and its error is published.
-- Every injection is recorded per machine (`~/.local/state/fael/usage.jsonl`, never in git), so `fael stats` shows fael's real cost in context.
+- Every injection is recorded per machine (`~/.local/state/fael/usage.jsonl`, never in git), so `fael stats` shows fael's real cost in context. This is **local telemetry, not memory**: it may be lost, is never read to answer a query, and a failure to write it never fails a command. `.fael/` is the only semantic state.
 - A row longer than about 400 estimated tokens triggers a warning when it is written, because it is paid for every time it is pushed. The hard limit is 10 KiB per row.
 
 ## 6. Self-healing
