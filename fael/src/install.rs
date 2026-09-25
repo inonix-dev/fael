@@ -78,6 +78,12 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
         .map_err(|e| format!("fael install: where am I? {e}"))?
         .to_string_lossy()
         .into_owned();
+    // Windows canonicalize() gives `\\?\C:\...`, which cmd.exe can't run —
+    // drop the prefix for drive paths (`\\?\UNC\` stays as-is)
+    let exe = match exe.strip_prefix(r"\\?\") {
+        Some(p) if p.as_bytes().get(1) == Some(&b':') => p.to_string(),
+        _ => exe,
+    };
     let c = Ctx {
         home,
         exe,

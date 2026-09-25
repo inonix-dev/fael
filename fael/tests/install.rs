@@ -80,7 +80,9 @@ fn install_all_three_idempotent_and_replaces_fapony_on_request() {
     );
     let t = read(&codex_cfg);
     assert!(
-        t.contains("[mcp_servers.fael]\ncommand = \"/") && t.contains("[mcp_servers.fapony]"),
+        t.contains("[mcp_servers.fael]\ncommand = \"")
+            && !t.contains(r"\\?\")
+            && t.contains("[mcp_servers.fapony]"),
         "{t}"
     );
     let o = read(&oc);
@@ -90,7 +92,7 @@ fn install_all_three_idempotent_and_replaces_fapony_on_request() {
     );
     let p = read(&home.join(".config/opencode/plugins/fael.js"));
     assert!(
-        p.contains("const FAEL = \"/") && !p.contains("__FAEL__"),
+        p.contains("const FAEL = \"") && !p.contains(r"\\?\") && !p.contains("__FAEL__"),
         "{p}"
     );
     assert!(read(&home.join(".claude/skills/fael/SKILL.md")).contains("fael add issue"));
