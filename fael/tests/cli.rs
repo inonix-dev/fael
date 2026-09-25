@@ -73,6 +73,11 @@ fn add_find_close_round_trip() {
 
     let (ok, _, err) = fael(&d, &["close", &id[..12], "fixed"]);
     assert!(ok, "{err}");
+    // closing twice writes nothing — the log stays clean
+    let (ok, _, err) = fael(&d, &["close", &id[..12], "again"]);
+    assert!(!ok && err.contains("already closed"), "{err}");
+    let (_, out, _) = fael(&d, &["find", "--json", "--all", "--files", "src/a.rs"]);
+    assert_eq!(out.matches("\"ref\":").count(), 1, "{out}");
     let (_, out, err) = fael(&d, &["find", "--files", "src/a.rs"]);
     assert!(out.is_empty() && err.contains("no rows match"), "{out}");
     let (_, out, _) = fael(&d, &["find", "--all", "--files", "src/a.rs"]);

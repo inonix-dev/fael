@@ -179,7 +179,7 @@ pub fn add_row(
     Ok((row, path, warns))
 }
 
-/// Resolve `id`, stamp, validate, append a close row. Closing twice is a warning, not a reject.
+/// Resolve `id`, stamp, validate, append a close row. A row already closed is rejected.
 pub fn close_row(
     fael: &Path,
     log: &Log,
@@ -189,13 +189,11 @@ pub fn close_row(
     why: &str,
 ) -> Result<(Row, PathBuf, Vec<String>), String> {
     let target = resolve(log, id)?;
-    let mut warns = vec![];
+    // a second close row adds nothing but noise to an append-only log
     if closed(log).contains(target.id.as_str()) {
-        warns.push(format!(
-            "fael: {} is already closed — closing it again",
-            target.id
-        ));
+        return Err(format!("rejected: {} is already closed", target.id));
     }
+    let warns = vec![];
     let mut row = Row::close(&stamp.by, &target.id, why);
     stamp.apply(&mut row);
     let path = close(fael, &row, cfg)?;
