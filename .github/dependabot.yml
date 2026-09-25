@@ -3,6 +3,13 @@ updates:
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly }
+    groups:
+      cargo: { patterns: ["*"] }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+    ignore:
+      # ponytail: @1.89 is the MSRV pin (matches rust-version), not a release tag
+      - dependency-name: dtolnay/rust-toolchain
