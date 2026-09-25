@@ -16,6 +16,10 @@ fn fael(dir: &Path, args: &[&str]) -> (bool, String, String) {
 fn repo() -> PathBuf {
     let d = std::env::temp_dir().join(format!("fael-cli-{}", fael_core::ulid()));
     std::fs::create_dir_all(d.join("src")).unwrap();
+    // chunk 4: `add` without --files derives from FAEL_STATE_DIR — point it at
+    // scratch so a real session on this machine never leaks into a test repo
+    // (each test sets its own; all are empty so the racy global reads the same)
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     for args in [
         &["init", "-q"][..],
         &["config", "user.name", "Test User"],
@@ -34,6 +38,10 @@ fn repo() -> PathBuf {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 fn add_find_close_round_trip() {
     let d = repo();
     // relative to cwd: `a.rs` from src/ is stored as src/a.rs

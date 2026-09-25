@@ -8,6 +8,7 @@ mod hook;
 mod install;
 mod maintain;
 mod mcp;
+mod write;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
 use std::collections::HashMap;
@@ -15,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage:
-  fael add <kind> \"<text>\" --files a,b [--key k] [--supersedes id]
+  fael add <kind> \"<text>\" [--files a,b] [--key k] [--supersedes id]
+      (no --files = the files this session edited, as the edit hook recorded)
   fael close <id> \"<why>\"
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
   fael keys [glob]
@@ -271,6 +273,10 @@ fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
 }
 
 /// Normalise files against cwd, then core's add path — shared by the CLI and MCP.
+/// No files: inherit the files this session edited (after the newest row);
+/// still empty without a hook session, and core keeps rejecting that.
+/// Every entry is checked against evidence (disk · renames · session edits ·
+/// git status) before the row is written.
 fn add_row(
     r: &Repo,
     kind: &str,
@@ -279,11 +285,24 @@ fn add_row(
     key: Option<String>,
     supersedes: Option<String>,
 ) -> Result<(Row, PathBuf, Vec<String>), String> {
-    let files = core::normalize_files(files, &r.cwd, &r.root)?;
+    let mut files = core::normalize_files(files, &r.cwd, &r.root)?;
+    let log = read(r);
+    if files.is_empty() {
+        files = write::derive(&r.root, &log);
+    }
+    let mut warns = write::check(
+        &r.root,
+        &aliases::load(r, &log, true),
+        &files,
+        &write::active_edits(&r.root),
+    )?;
     let st = stamp(r);
     let mut row = Row::new(&st.by, kind, text, files);
     row.key = key;
-    core::add_row(&r.fael, &read(r), &r.cfg, &st, row, supersedes.as_deref())
+    let (row, path, mut core_warns) =
+        core::add_row(&r.fael, &log, &r.cfg, &st, row, supersedes.as_deref())?;
+    warns.append(&mut core_warns);
+    Ok((row, path, warns))
 }
 
 fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {

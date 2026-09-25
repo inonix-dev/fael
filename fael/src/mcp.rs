@@ -157,12 +157,13 @@ fn tools() -> Value {
             "description": "Record something the next session must know: a decision and why, a bug (kind issue), \
     or state a later session needs (note). One standalone sentence or two — it is read months later with no chat. \
     files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one. \
+    files may be omitted when this session edited files (the hook recorded them) — they are filled in; otherwise files is required. \
     Saw something broken, inconsistent or likely to break? Add it as kind issue right there — do not wait for the end of the task.",
-            "inputSchema": {"type": "object", "required": ["kind", "text", "files"], "properties": {
+            "inputSchema": {"type": "object", "required": ["kind", "text"], "properties": {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "text": str_("what happened and why, standalone"),
-                "files": {"type": "array", "items": {"type": "string"}, "minItems": 1,
-                    "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files"},
+                "files": {"type": "array", "items": {"type": "string"},
+                    "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),
                 "supersedes": str_("id of the row this one replaces"),
             }},

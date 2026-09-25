@@ -301,7 +301,7 @@ fn stop(e: &Event) -> Reply {
     let last_row = core::last_row_ms(&c.log, since_ms);
     let recorded = session_edits(&edits_path(&c.session, root));
     let mut edits: Vec<String> = vec![];
-    for (path, at) in &recorded {
+    for (path, at, _) in &recorded {
         if last_row.is_none_or(|r| *at > r) && !edits.contains(path) {
             edits.push(path.clone());
         }
@@ -443,24 +443,25 @@ fn stop_blocked_before(session: &str, worktree: &str, kind: &str) -> bool {
     false
 }
 
-/// Apply `f` unless the entry is a `scheme:ref` anchor (anchors are opaque,
-/// never filesystem paths).
-fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
+/// A `scheme:ref` anchor (opaque, never a filesystem path) — the same rule
+/// core uses: a scheme of ≥ 2 lower chars before the first `:`.
+pub(crate) fn is_anchor(f: &str) -> bool {
     if f.contains("://") || !f.contains(':') {
-        return resolve(f);
+        return false;
     }
     // cheap anchor check without reaching into core: scheme of ≥2 lower chars
     let scheme = f.split(':').next().unwrap_or("");
-    if scheme.len() >= 2
+    scheme.len() >= 2
         && scheme.as_bytes()[0].is_ascii_lowercase()
         && scheme
             .bytes()
             .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'+' | b'.' | b'-'))
-    {
-        f.to_string()
-    } else {
-        resolve(f)
-    }
+}
+
+/// Apply `f` unless the entry is a `scheme:ref` anchor (anchors are opaque,
+/// never filesystem paths).
+fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
+    if is_anchor(f) { f.to_string() } else { resolve(f) }
 }
 
 /// Per-machine runtime state, never in `.fael/` (that is shared project data).
@@ -479,9 +480,10 @@ fn seen_path(session: &str, root: &Path) -> PathBuf {
     state_dir().join("sessions").join(format!("{key}.seen"))
 }
 
-/// One `{"path","at"}` line per edit event, in order — (path, at ms). A torn
-/// or unreadable line is skipped; any error is an empty list.
-fn session_edits(path: &Path) -> Vec<(String, i64)> {
+/// One `{"path","at"[, "worktree"]}` line per edit event, in order —
+/// (path, at ms, worktree or None for lines written before it was recorded).
+/// A torn or unreadable line is skipped; any error is an empty list.
+pub(crate) fn session_edits(path: &Path) -> Vec<(String, i64, Option<String>)> {
     let Ok(s) = std::fs::read_to_string(path) else {
         return vec![];
     };
@@ -491,13 +493,16 @@ fn session_edits(path: &Path) -> Vec<(String, i64)> {
             Some((
                 v["path"].as_str()?.to_string(),
                 core::ts_ms(v["at"].as_str()?)?,
+                v["worktree"].as_str().map(String::from),
             ))
         })
         .collect()
 }
 
-/// Append one line per file. Fails open like record_usage.
-fn record_edits(path: &Path, files: &[String]) {
+/// Append one line per file. Fails open like record_usage. The worktree rides
+/// along so `fael add` without `--files` can tell which session files belong
+/// to its repo (the filename hash is one-way).
+fn record_edits(path: &Path, worktree: &str, files: &[String]) {
     let Some(at) = now_rfc3339() else { return };
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
@@ -505,7 +510,12 @@ fn record_edits(path: &Path, files: &[String]) {
         use std::io::Write;
         let body: String = files
             .iter()
-            .map(|f| format!("{}\n", serde_json::json!({"path": f, "at": at})))
+            .map(|f| {
+                format!(
+                    "{}\n",
+                    serde_json::json!({"path": f, "at": at, "worktree": worktree})
+                )
+            })
             .collect();
         let _ = std::fs::OpenOptions::new()
             .create(true)
@@ -678,7 +688,11 @@ fn push(e: &Event, event: &str) -> Reply {
     }
     // only adopted repos — stop never blocks without a log anyway
     if event == "edit" && !c.session.is_empty() && c.repo.fael.join("log").is_dir() {
-        record_edits(&edits_path(&c.session, &c.repo.root), &files);
+        record_edits(
+            &edits_path(&c.session, &c.repo.root),
+            &c.repo.root.to_string_lossy(),
+            &files,
+        );
     }
     // the read/edit push resolves renames through the L1 cache only — no git
     // spawn on this path (one spawn is ~9 ms against a 5 ms ceiling).
@@ -724,7 +738,7 @@ fn push(e: &Event, event: &str) -> Reply {
 
 // --- usage + stats (SPEC §8) ---
 
-fn state_dir() -> PathBuf {
+pub(crate) fn state_dir() -> PathBuf {
     if let Ok(d) = std::env::var("FAEL_STATE_DIR")
         && !d.is_empty()
     {
@@ -760,6 +774,10 @@ fn record_usage(client: &str, event: &str, repo: &Path, text: &str, ids: &[Strin
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the lint — split, then drop"
+)]
 pub fn stats(json: bool) -> Result<(), String> {
     let path = state_dir().join("usage.jsonl");
     let Ok(s) = std::fs::read_to_string(&path) else {
