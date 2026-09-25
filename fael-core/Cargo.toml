@@ -1,0 +1,13 @@
+[package]
+name = "fael-core"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "fael log format: parse, validate, append under lock"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.3"
+sha2 = "0.10"

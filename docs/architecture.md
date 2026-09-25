@@ -1,6 +1,7 @@
 # fael architecture
 
-> **Status: design — nothing below is implemented yet.** This page is the contract the code is built against;
+> **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`; the CLI, MCP,
+> hooks and maintenance commands are design. This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for coding agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, …)
