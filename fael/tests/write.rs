@@ -1,16 +1,16 @@
 //! Chunk 4 (PLAN-fael-path-integrity): `fael add` without `--files` inherits
 //! the session's edited files, and mistyped paths are rejected with the
-//! closest name. `FAEL_STATE_DIR` is process-global, so every test holds `LOCK`.
+//! closest name.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 
-static LOCK: Mutex<()> = Mutex::new(());
-
-fn lock() -> std::sync::MutexGuard<'static, ()> {
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+/// Per-child `FAEL_STATE_DIR` at `<repo root>/state`, so a real session on this
+/// machine never leaks in and tests run in parallel without a global env lock.
+fn state_env(c: &mut Command, dir: &Path) {
+    let root = dir.ancestors().find(|p| p.join(".git").exists()).unwrap();
+    c.env("FAEL_STATE_DIR", root.join("state"));
 }
 
 fn fael(dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
@@ -27,6 +27,7 @@ fn fael_as(
 ) -> (bool, String, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
     c.args(args).current_dir(dir);
+    state_env(&mut c, dir);
     match session {
         Some(s) => c.env("CLAUDE_CODE_SESSION_ID", s),
         None => c.env_remove("CLAUDE_CODE_SESSION_ID"),
@@ -67,7 +68,6 @@ fn repo() -> PathBuf {
     // the edit hook only records for adopted repos, and the tests below edit
     // strictly after the first row, so the derive filter (`at > last row`)
     // never ties at ms precision
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let (ok, _, err) = fael(&d, &["add", "note", "seed", "--files", "doc:seed"], "");
     assert!(ok, "{err}");
     std::thread::sleep(std::time::Duration::from_millis(5));
@@ -99,7 +99,6 @@ fn row_files(d: &Path, needle: &str) -> Vec<String> {
 
 #[test]
 fn add_without_files_derives_session_edits() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     edit(&d, "s1", &[d.join("src/a.rs")]);
@@ -110,7 +109,6 @@ fn add_without_files_derives_session_edits() {
 
 #[test]
 fn add_without_files_or_edits_still_requires_files() {
-    let _g = lock();
     let d = repo();
     let (ok, _, err) = fael(&d, &["add", "note", "nothing to derive from"], "");
     assert!(!ok && err.contains("files is required"), "{err}");
@@ -118,7 +116,6 @@ fn add_without_files_or_edits_still_requires_files() {
 
 #[test]
 fn edits_before_the_last_row_do_not_derive() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     edit(&d, "s1", &[d.join("src/a.rs")]);
@@ -135,7 +132,6 @@ fn edits_before_the_last_row_do_not_derive() {
 
 #[test]
 fn typo_is_rejected_with_the_closest_name() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/auth.rs"), "//\n").unwrap();
     let (ok, _, err) = fael(&d, &["add", "note", "x", "--files", "src/autn.rs"], "");
@@ -148,7 +144,6 @@ fn typo_is_rejected_with_the_closest_name() {
 
 #[test]
 fn unmatched_path_without_a_close_sibling_is_warned_not_blocked() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/live.rs"), "//\n").unwrap();
     // rows about deleted or planned files stay fileable — kickoff/doctor,
@@ -165,7 +160,6 @@ fn unmatched_path_without_a_close_sibling_is_warned_not_blocked() {
 
 #[test]
 fn edited_then_deleted_file_passes_silently() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/tmp.rs"), "//\n").unwrap();
     edit(&d, "s1", &[d.join("src/tmp.rs")]);
@@ -182,7 +176,6 @@ fn edited_then_deleted_file_passes_silently() {
 
 #[test]
 fn glob_and_anchor_pass_without_evidence() {
-    let _g = lock();
     let d = repo();
     let (ok, _, err) = fael(
         &d,
@@ -200,7 +193,6 @@ fn glob_and_anchor_pass_without_evidence() {
 
 #[test]
 fn untracked_shell_made_file_passes() {
-    let _g = lock();
     let d = repo();
     // the edit hook never saw it (no hook event), but git status knows it
     std::fs::write(d.join("src/shell.rs"), "//\n").unwrap();
@@ -214,7 +206,6 @@ fn untracked_shell_made_file_passes() {
 
 #[test]
 fn edits_from_another_worktree_do_not_derive() {
-    let _g = lock();
     let d = repo();
     let other = repo();
     std::fs::write(other.join("src/b.rs"), "// b\n").unwrap();
@@ -228,7 +219,6 @@ fn edits_from_another_worktree_do_not_derive() {
 #[test]
 fn mcp_add_without_files_derives_too() {
     use std::io::Write as _;
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     edit(&d, "s1", &[d.join("src/a.rs")]);
@@ -238,6 +228,7 @@ fn mcp_add_without_files_derives_too() {
     ];
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
         .arg("mcp")
+        .env("FAEL_STATE_DIR", d.join("state"))
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .current_dir(&d)
         .stdin(std::process::Stdio::piped())
@@ -269,7 +260,6 @@ fn mcp_add_without_files_derives_too() {
 
 #[test]
 fn concurrent_sessions_never_derive_each_others_files() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     std::fs::write(d.join("src/b.rs"), "// b\n").unwrap();
@@ -291,7 +281,6 @@ fn concurrent_sessions_never_derive_each_others_files() {
 
 #[test]
 fn force_files_a_planned_sibling_of_an_existing_file() {
-    let _g = lock();
     let d = repo();
     std::fs::write(d.join("src/a.rs"), "//\n").unwrap();
     let (ok, _, err) = fael(&d, &["add", "note", "plan b", "--files", "src/b.rs"], "");
@@ -307,7 +296,6 @@ fn force_files_a_planned_sibling_of_an_existing_file() {
 
 #[test]
 fn staged_rename_source_is_not_evidence() {
-    let _g = lock();
     let d = repo();
     let git = |args: &[&str]| {
         assert!(

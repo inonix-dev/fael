@@ -3,12 +3,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Per-child `FAEL_STATE_DIR` at `<repo root>/state`, so a real session on this
+/// machine never leaks in and tests run in parallel without a global env lock.
+fn state_env(c: &mut Command, dir: &Path) {
+    let root = dir.ancestors().find(|p| p.join(".git").exists()).unwrap();
+    c.env("FAEL_STATE_DIR", root.join("state"));
+}
+
 fn fael(dir: &Path, args: &[&str]) -> (bool, String, String) {
-    let o = Command::new(env!("CARGO_BIN_EXE_fael"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
+    c.args(args).current_dir(dir);
+    state_env(&mut c, dir);
+    let o = c.output().unwrap();
     let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     (o.status.success(), s(&o.stdout), s(&o.stderr))
 }
@@ -16,10 +22,6 @@ fn fael(dir: &Path, args: &[&str]) -> (bool, String, String) {
 fn repo() -> PathBuf {
     let d = std::env::temp_dir().join(format!("fael-cli-{}", fael_core::ulid()));
     std::fs::create_dir_all(d.join("src")).unwrap();
-    // chunk 4: `add` without --files derives from FAEL_STATE_DIR — point it at
-    // scratch so a real session on this machine never leaks into a test repo
-    // (each test sets its own; all are empty so the racy global reads the same)
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     for args in [
         &["init", "-q"][..],
         &["config", "user.name", "Test User"],
@@ -194,6 +196,7 @@ fn mcp_round_trip() {
     ];
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
         .arg("mcp")
+        .env("FAEL_STATE_DIR", d.join("state"))
         .current_dir(&d)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

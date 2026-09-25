@@ -1,23 +1,23 @@
 //! Chunk 1 (§3 criteria 1 + 3): a row filed under `a.rs` still pushes at the
 //! new path after a committed `git mv`, and across a rename chain `a→b→c`.
-//! Hook tests share `FAEL_STATE_DIR`, which is process-global, so every test
-//! holds `LOCK` and points the state at a scratch dir — usage lines from
-//! throwaway repos must never land in the real `usage.jsonl`.
+//! State goes to a scratch dir per repo — usage lines from throwaway repos
+//! must never land in the real `usage.jsonl`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 
-static LOCK: Mutex<()> = Mutex::new(());
-
-fn lock() -> std::sync::MutexGuard<'static, ()> {
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+/// Per-child `FAEL_STATE_DIR` at `<repo root>/state`, so a real session on this
+/// machine never leaks in and tests run in parallel without a global env lock.
+fn state_env(c: &mut Command, dir: &Path) {
+    let root = dir.ancestors().find(|p| p.join(".git").exists()).unwrap();
+    c.env("FAEL_STATE_DIR", root.join("state"));
 }
 
 fn fael(dir: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"));
     c.args(args).current_dir(dir);
+    state_env(&mut c, dir);
     if !stdin.is_empty() {
         c.stdin(Stdio::piped());
     }
@@ -107,9 +107,7 @@ fn session_start(d: &Path) {
 
 #[test]
 fn rename_pushes_at_the_new_path() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
 
     git(&d, &["mv", "src/a.rs", "src/b.rs"]);
@@ -131,9 +129,7 @@ fn rename_pushes_at_the_new_path() {
 
 #[test]
 fn rename_chain_pushes_at_the_end() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
 
     git(&d, &["mv", "src/a.rs", "src/b.rs"]);
@@ -147,9 +143,7 @@ fn rename_chain_pushes_at_the_end() {
 
 #[test]
 fn session_start_refresh_picks_up_later_renames() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
 
     // first read builds the cache at this HEAD …
@@ -163,9 +157,7 @@ fn session_start_refresh_picks_up_later_renames() {
 
 #[test]
 fn resolve_false_returns_to_pre_resolver_matching() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
     std::fs::write(d.join(".fael/config.toml"), "resolve = false\n").unwrap();
 
@@ -183,9 +175,7 @@ fn resolve_false_returns_to_pre_resolver_matching() {
 fn no_renames_still_writes_the_cache_at_head() {
     // --diff-filter=R lists no commits here; the head must still be HEAD, or
     // every read/edit hook would re-run the full git log (01M3CTV9Y)
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     add(&d, "src/a.rs");
     hook_read(&d, "src/a.rs");
     let cache = std::fs::read_to_string(d.join(".fael/cache/aliases.json")).unwrap();
@@ -206,9 +196,7 @@ fn doctor(d: &Path) -> String {
 #[test]
 fn kickoff_keeps_rows_after_rename() {
     // chunk 1 fixed push/find; kickoff used to drop the moved row (chunk 2)
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
 
     git(&d, &["mv", "src/a.rs", "src/b.rs"]);
@@ -221,10 +209,8 @@ fn kickoff_keeps_rows_after_rename() {
 
 #[test]
 fn doctor_gone_only_for_truly_missing_files() {
-    let _g = lock();
     // a deleted file (no rename anywhere): Gone is reported …
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     add(&d, "src/a.rs");
     git(&d, &["rm", "-q", "src/a.rs"]);
     commit_all(&d, "delete a");
@@ -232,7 +218,6 @@ fn doctor_gone_only_for_truly_missing_files() {
 
     // … but a renamed file resolves through the alias, so no Gone
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     add(&d, "src/a.rs");
     git(&d, &["mv", "src/a.rs", "src/b.rs"]);
     commit_all(&d, "rename a to b");
@@ -243,9 +228,7 @@ fn doctor_gone_only_for_truly_missing_files() {
 #[test]
 fn non_ascii_rename_pushes_at_the_new_path() {
     // without -z git C-quotes these names and the pair never matches (01M3CTVA2)
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/ก.rs");
     git(&d, &["mv", "src/ก.rs", "src/ข.rs"]);
     commit_all(&d, "rename");
@@ -255,9 +238,7 @@ fn non_ascii_rename_pushes_at_the_new_path() {
 #[test]
 fn uncommitted_mv_pushes_at_the_new_path() {
     // chunk 3 §3.2: plain `mv` with no commit — the HEAD blob still links old → new
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
     std::fs::rename(d.join("src/a.rs"), d.join("src/b.rs")).unwrap();
     // no commit and no session-start: the hook read itself finds the move
@@ -270,9 +251,7 @@ fn uncommitted_mv_pushes_at_the_new_path() {
 #[test]
 fn uncommitted_mv_needs_same_content_and_extension() {
     // a different blob is not a move: rewriting a.rs elsewhere must not steal the row
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     let id = add(&d, "src/a.rs");
     std::fs::remove_file(d.join("src/a.rs")).unwrap();
     std::fs::write(d.join("src/b.rs"), "// something else entirely\n").unwrap();
@@ -285,9 +264,7 @@ fn uncommitted_mv_needs_same_content_and_extension() {
 
 #[test]
 fn mv_records_alias_for_anchors_git_cannot_see() {
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     // anchors need no file on disk — `add` never checked that
     let (ok, out, err) = fael(
         &d,
@@ -325,9 +302,7 @@ fn mv_records_alias_for_anchors_git_cannot_see() {
 #[test]
 fn mv_file_resolves_doctor_gone() {
     // `fael mv` with different content isolates the alias from the blob scan
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     add(&d, "src/a.rs");
     let (ok, _, err) = fael(&d, &["mv", "src/a.rs", "src/z.rs"], "");
     assert!(ok, "{err}");
@@ -340,7 +315,6 @@ fn mv_file_resolves_doctor_gone() {
 
 #[test]
 fn help_exits_zero_and_lists_mv() {
-    let _g = lock();
     let d = repo();
     for args in [&["--help"][..], &["help"][..], &["find", "--help"][..]] {
         let (ok, out, err) = fael(&d, args, "");
@@ -353,9 +327,7 @@ fn help_exits_zero_and_lists_mv() {
 fn deleted_row_file_is_cached_dead_so_the_hook_skips_git() {
     // a committed delete has no HEAD blob: refresh records it, and read/edit
     // stop spawning ls-tree for it on every call
-    let _g = lock();
     let d = repo();
-    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
     add(&d, "src/a.rs");
     git(&d, &["rm", "-q", "src/a.rs"]);
     commit_all(&d, "delete a");
