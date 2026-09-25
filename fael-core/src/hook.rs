@@ -10,7 +10,9 @@ use crate::id::ts_ms;
 pub struct StopFacts {
     /// The client already fired this hook once — letting through avoids a loop.
     pub stop_active: bool,
-    /// Repo-relative files the edit hook saw this session, first-seen order.
+    /// Repo-relative files edited after the session's last row (or since the
+    /// start when it has none), first-seen order — already filtered, so
+    /// `new_row` does not excuse them.
     pub edits: Vec<String>,
     /// `git log --format=%h %s` since the session start — only filled when
     /// `edits` is empty (fallback for edits made outside the edit hook).
@@ -45,8 +47,9 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
             ),
         );
     }
-    // Work rule: files edited (or, failing that, commits) with nothing recorded.
-    if (f.edits.is_empty() && f.commits.is_empty()) || !f.has_log || f.new_row {
+    // Work rule: files edited since the last row (or, failing that, commits
+    // with no row at all this session).
+    if !f.has_log || (f.edits.is_empty() && (f.commits.is_empty() || f.new_row)) {
         return None;
     }
     // markdown like render(): one `- ` line per item, --files prefilled
@@ -67,15 +70,16 @@ pub fn decide_stop(f: &StopFacts) -> Option<String> {
     Some(out.join("\n"))
 }
 
-/// True when any add or close row is stamped at or after `since_ms`. Numeric
-/// (ms) on both sides — a whole-second string compare reads a row filed just
+/// The newest add or close row stamped at or after `since_ms`, in ms. Numeric
+/// on both sides — a whole-second string compare reads a row filed just
 /// before the session start as newer whenever they share a second.
-pub fn has_new_row(log: &Log, since_ms: i64) -> bool {
+pub fn last_row_ms(log: &Log, since_ms: i64) -> Option<i64> {
     log.rows
         .iter()
         .chain(log.closes.iter())
         .filter_map(|r| ts_ms(&r.ts))
-        .any(|ms| ms >= since_ms)
+        .filter(|&ms| ms >= since_ms)
+        .max()
 }
 
 #[cfg(test)]
@@ -137,10 +141,9 @@ mod tests {
         .unwrap();
         assert!(r.contains("2 file(s) edited") && r.contains("\n- src/a.rs"), "{r}");
         assert!(r.contains("--files src/a.rs,src/b.rs") && !r.contains("abc123"), "{r}");
-        assert!(
-            decide_stop(&StopFacts { edits: vec!["a".into()], commits: vec![], new_row: true, ..facts() })
-                .is_none()
-        );
+        // edits arrive filtered to after the last row — a row earlier in the
+        // session does not excuse them
+        assert!(decide_stop(&StopFacts { edits: vec!["a".into()], new_row: true, ..facts() }).is_some());
     }
 
     #[test]
@@ -169,7 +172,7 @@ mod tests {
         let mut r = Row::new("t-0000", "note", "x", vec!["a.rs".into()]);
         r.ts = "2026-09-25T10:00:01Z".into();
         log.rows.push(r);
-        assert!(!has_new_row(&log, ts_ms("2026-09-25T10:00:01.500Z").unwrap()));
-        assert!(has_new_row(&log, ts_ms("2026-09-25T10:00:01Z").unwrap()));
+        assert!(last_row_ms(&log, ts_ms("2026-09-25T10:00:01.500Z").unwrap()).is_none());
+        assert!(last_row_ms(&log, ts_ms("2026-09-25T10:00:01Z").unwrap()).is_some());
     }
 }

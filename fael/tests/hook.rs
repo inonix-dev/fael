@@ -118,7 +118,7 @@ fn stop_blocks_commit_without_row_then_allows() {
 }
 
 #[test]
-fn stop_blocks_edits_without_commit_or_row() {
+fn stop_blocks_edits_after_last_row() {
     // agents told never to commit: the edit hook's list is the work signal
     let _g = lock();
     let d = repo();
@@ -141,16 +141,22 @@ fn stop_blocks_edits_without_commit_or_row() {
     assert!(ok && out.contains("2 file(s) edited"), "{out}");
     assert!(out.contains("--files src/b.rs,src/a.rs"), "{out}");
 
-    // a row for the work lets it through (fresh state dir skips the dedupe, so
-    // the edit list is gone too — re-record one edit there)
+    // a row for the work lets it through — same state dir: the dedupe is keyed
+    // on the last row, and no edit follows the new one
     let (ok, _, err) = fael(&d, &["add", "note", "b.rs added", "--files", "src/b.rs"], "");
     assert!(ok, "{err}");
-    unsafe { std::env::set_var("FAEL_STATE_DIR", state(&d).join("s2")) };
+    let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
+    assert!(ok && !out.contains("block"), "{out}");
+
+    // work after that row blocks once more, listing only the later edit
+    std::thread::sleep(std::time::Duration::from_millis(5));
     let edit = format!(
-        r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":"src/b.rs"}}}}"#,
+        r#"{{"cwd":{},"transcript_path":{},"tool_input":{{"file_path":"src/a.rs"}}}}"#,
         json(&d), json(&t)
     );
     assert!(fael(&d, &["hook", "edit", "--client", "claude"], &edit).0);
+    let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
+    assert!(ok && out.contains("1 file(s) edited") && !out.contains("src/b.rs"), "{out}");
     let (ok, out, _) = fael(&d, &["hook", "stop", "--client", "claude"], &input);
     assert!(ok && !out.contains("block"), "{out}");
 }

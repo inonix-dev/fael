@@ -167,18 +167,20 @@ Ranking is **deterministic**: the same log, query and budget give the same outpu
 
 **Enforce** — the agent tries to end a turn:
 ```
-client ─(edit event)─▶ append file to ~/.local/state/fael/sessions/<session+worktree>.edits
+client ─(edit event)─▶ append {"path","at"} to ~/.local/state/fael/sessions/<session+worktree>.jsonl
 
-client ─(stop event)─▶ core: files edited this session?
-                        (none recorded → fall back to git commits since start) ─no─▶ allow
-                                 │yes
-                                 ▼
-                         new row this turn? ─yes─▶ allow
-                                 │no
-                                 ▼
-                         block once, with the files as a markdown list and the exact command to run
+client ─(stop event)─▶ edits recorded this session?
+                          │yes                                │no
+                          ▼                                   ▼
+                any edit after the session's        git commits since start
+                newest row (or any, if none)?       and no row this session?
+                          │                                   │
+                   no ─▶ allow  yes ─┐            no ─▶ allow  yes ─┐
+                                     ▼                              ▼
+                        block once per last row — a markdown list of the files
+                        (or commits) and the exact command, --files prefilled
 ```
-Edits, not commits, are the primary signal: many agents are told never to commit, and a commit-only rule never fires for them. The edit list is per-machine runtime state, never in `.fael/`. The `session` string sent with `edit` must equal the one sent with `stop`.
+Edits, not commits, are the primary signal: many agents are told never to commit, and a commit-only rule never fires for them. Git is only the fallback for edits the hook never saw (a shell `sed`, a heredoc). Measuring from the newest row, not the session start, keeps a row filed early from covering hours of work after it; a new row reopens one more block. The edit list is per-machine runtime state, never in `.fael/`. The `session` string sent with `edit` must equal the one sent with `stop`.
 
 **Session start:**
 ```

@@ -232,10 +232,19 @@ fn stop(e: &Event) -> Reply {
         None => return no(),
     };
     let root = &c.repo.root;
-    let edits = session_edits(&edits_path(&c.session, root));
+    // edits count only after the session's newest row — a row filed early
+    // does not cover hours of work after it
+    let last_row = core::last_row_ms(&c.log, since_ms);
+    let recorded = session_edits(&edits_path(&c.session, root));
+    let mut edits: Vec<String> = vec![];
+    for (path, at) in &recorded {
+        if last_row.is_none_or(|r| *at > r) && !edits.contains(path) {
+            edits.push(path.clone());
+        }
+    }
     // commits only when the edit hook saw nothing (e.g. edits via a shell) —
     // the one git spawn left on this path
-    let commits: Vec<String> = if edits.is_empty() {
+    let commits: Vec<String> = if recorded.is_empty() {
         git(root, &["log", "--since", &since, "--format=%h %s"])
             .map(|s| s.lines().map(String::from).collect())
             .unwrap_or_default()
@@ -256,14 +265,17 @@ fn stop(e: &Event) -> Reply {
         stop_active: false,
         edits,
         commits,
-        new_row: core::has_new_row(&c.log, since_ms),
+        new_row: last_row.is_some(),
         has_log: true,
         bug_signal: bug_signal.clone(),
         bug_row_since,
     });
     let Some(reason) = reason else { return no() };
-    // once per session per worktree per problem — the second end lets through
-    let kind = bug_signal.map(|m| format!("bug:{m}")).unwrap_or("work".into());
+    // once per session per worktree per problem — the second end lets through.
+    // A new row opens one more work block, for edits made after it.
+    let kind = bug_signal
+        .map(|m| format!("bug:{m}"))
+        .unwrap_or_else(|| format!("work:{}", last_row.unwrap_or(0)));
     if stop_blocked_before(&c.session, &root.to_string_lossy(), &kind) {
         return no();
     }
@@ -371,28 +383,30 @@ fn unless_anchor(f: &str, resolve: impl FnOnce(&str) -> String) -> String {
 // ponytail: no cleanup of old sessions — prune by mtime if the dir grows.
 fn edits_path(session: &str, root: &Path) -> PathBuf {
     let key = session_key(&format!("{session}\0{}", root.to_string_lossy()));
-    state_dir().join("sessions").join(format!("{key}.edits"))
+    state_dir().join("sessions").join(format!("{key}.jsonl"))
 }
 
-/// Repo-relative paths, one per line, first-seen order. Empty on any error.
-fn session_edits(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
-        .unwrap_or_default()
+/// One `{"path","at"}` line per edit event, in order — (path, at ms). A torn
+/// or unreadable line is skipped; any error is an empty list.
+fn session_edits(path: &Path) -> Vec<(String, i64)> {
+    let Ok(s) = std::fs::read_to_string(path) else { return vec![] };
+    s.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| Some((v["path"].as_str()?.to_string(), core::ts_ms(v["at"].as_str()?)?)))
+        .collect()
 }
 
-/// Append files not yet listed. Fails open like record_usage.
+/// Append one line per file. Fails open like record_usage.
 fn record_edits(path: &Path, files: &[String]) {
-    let seen = session_edits(path);
-    let new: Vec<&String> = files.iter().filter(|f| !seen.contains(f)).collect();
-    if new.is_empty() {
-        return;
-    }
+    let Some(at) = now_rfc3339() else { return };
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
     {
         use std::io::Write;
-        let body: String = new.iter().map(|f| format!("{f}\n")).collect();
+        let body: String = files
+            .iter()
+            .map(|f| format!("{}\n", serde_json::json!({"path": f, "at": at})))
+            .collect();
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

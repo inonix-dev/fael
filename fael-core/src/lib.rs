@@ -6,7 +6,7 @@ mod id;
 mod log;
 mod query;
 
-pub use hook::{StopFacts, decide_stop, has_new_row};
+pub use hook::{StopFacts, decide_stop, last_row_ms};
 
 pub use id::{now_ms, rfc3339, ts_ms, ulid, ulid_at, writer_id};
 pub use log::{Log, MONTH_MAX, add, append, close, parse, read};
