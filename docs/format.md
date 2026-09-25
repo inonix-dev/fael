@@ -15,6 +15,7 @@ Reference implementation: [`fael-core`](../fael-core/src).
       compact.<ULID>.jsonl     immutable (+ a `.close.jsonl` companion when closes name no row here)
     _import/<ULID>.jsonl       immutable (+ a `.close.jsonl` companion, same rule)
   quarantine/<file>.<ULID>.jsonl  lines `doctor --fix` removed — never re-read, never deleted
+  cache/aliases.json             rename cache from `git log -M`, gitignored, rebuildable — never a source of truth
   .lock                        not in git
 ```
 
@@ -53,6 +54,18 @@ Reference implementation: [`fael-core`](../fael-core/src).
 
 **Compact files** carry the close inside the row instead: `"closed":{"id","ts","by","text"}`.
 
+**Alias row** — in `<writer>/<yyyy-mm>.jsonl` (what `fael mv <old> <new>` appends when git
+can't see a move: anchors, uncommitted rewrites, repos without git):
+
+```json
+{"v":1,"id":"01J8…","ts":"…","by":"delamind-3f9a","text":"doc:pricing → doc:pricing-2027","moved":{"from":"doc:pricing","to":"doc:pricing-2027"}}
+```
+
+Carries no `kind` and no `files` — it only says "what was `from` is now `to`". Readers that
+don't know `moved` must skip the row entirely (never show it, never count it as a legacy
+row without `files`); readers that do expand queries through it like a git rename. Never
+edited or deleted — a wrong alias is fixed by moving back, not by rewriting.
+
 ## Writers
 
 **Write contract ≠ read contract.** Writers v1 must follow every rule below; readers must accept anything
@@ -80,6 +93,7 @@ Reading never fails. Take no lock; for every `*.jsonl` under `log/`:
 - skip blank lines and merge-conflict markers (`<<<<<<<` `=======` `|||||||` `>>>>>>>`) — keep the rows on both sides
 - skip a line that isn't a JSON object, or whose known fields have the wrong type, and report `file:line`
 - **keep every field and kind you don't know**, and write them back unchanged — readers are forward-compatible and lossless
+- skip a row with a `moved` object you don't understand — it's an alias carrier, not a result
 - drop duplicate `id`s, keeping the first in path order (a union merge duplicates lines)
 - a row without `files` (legacy) is valid to read
 - compare `files` after turning `\` into `/` and dropping a leading `./` — legacy rows were not normalised

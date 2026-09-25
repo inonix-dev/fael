@@ -22,7 +22,7 @@ pub use doctor::{
 pub use hook::{StopFacts, decide_stop, last_row_ms};
 
 pub use id::{now_ms, rfc3339, ts_ms, ulid, ulid_at, writer_id};
-pub use log::{Log, MONTH_MAX, add, add_row, append, close, close_row, parse, read};
+pub use log::{Log, MONTH_MAX, add, add_row, append, close, close_row, mv_row, parse, read};
 pub use query::{
     Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, gone, keys, kickoff, push,
     query, render, resolve, superseded, warnings,
@@ -93,6 +93,25 @@ impl Row {
             by: by.into(),
             text: text.into(),
             reference: Some(reference.into()),
+            ..Row::default()
+        }
+    }
+
+    /// A fresh v1 alias row recording `from → to` (`fael mv`). Carries no
+    /// kind and no files — it only says where a path lives now. Readers that
+    /// don't know `moved` skip the row; `text` is human-readable and ignored.
+    pub fn moved(by: &str, from: &str, to: &str) -> Row {
+        let ms = now_ms();
+        Row {
+            v: Some(1),
+            id: ulid_at(ms),
+            ts: rfc3339(ms),
+            by: by.into(),
+            text: format!("{from} → {to}"),
+            extra: Map::from_iter([(
+                "moved".to_string(),
+                serde_json::json!({"from": from, "to": to}),
+            )]),
             ..Row::default()
         }
     }
@@ -236,6 +255,50 @@ pub fn validate(row: &Row, cfg: &Config) -> Result<(), String> {
 pub fn validate_close(row: &Row, cfg: &Config) -> Result<(), String> {
     if row.reference.as_deref().is_none_or(|r| r.trim().is_empty()) {
         return Err("rejected: close needs the id of the row it closes".into());
+    }
+    check_common(row, cfg)
+}
+
+/// Check an alias (`moved`) row before it is written — what `fael mv` appends.
+pub fn validate_alias(row: &Row, cfg: &Config) -> Result<(), String> {
+    if !row.kind.is_empty() {
+        return Err(
+            "rejected: an alias row carries no kind — it only says where a path moved".into(),
+        );
+    }
+    if !row.files.is_empty() {
+        return Err(
+            "rejected: an alias row carries no files — it only says where a path moved".into(),
+        );
+    }
+    if row.reference.is_some() {
+        return Err("rejected: an alias row closes nothing — it only says where a path moved".into());
+    }
+    let pair = row
+        .extra
+        .get("moved")
+        .and_then(|m| m.as_object())
+        .and_then(|m| Some((m.get("from")?.as_str()?, m.get("to")?.as_str()?)));
+    let Some((from, to)) = pair else {
+        return Err(
+            "rejected: alias needs moved.from and moved.to strings — write it with `fael mv <old> <new>`"
+                .into(),
+        );
+    };
+    if from.trim().is_empty() || to.trim().is_empty() {
+        return Err("rejected: alias from and to must both be named".into());
+    }
+    if from == to {
+        return Err(format!(
+            "rejected: {from:?} is already itself — `fael mv` needs two different paths"
+        ));
+    }
+    for f in [from, to] {
+        if !canonical(f) {
+            return Err(format!(
+                "rejected: alias entry {f:?} is not repo-relative — write it like src/auth.rs (no ./, .., absolute path or \\); `fael mv` normalises this for you"
+            ));
+        }
     }
     check_common(row, cfg)
 }

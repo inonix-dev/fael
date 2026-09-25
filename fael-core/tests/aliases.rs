@@ -144,6 +144,74 @@ fn push_at_chain_end_finds_the_original_row() {
 }
 
 #[test]
+fn moved_row_validates_and_feeds_from_log() {
+    let row = Row::moved("t-1234", "src/a.rs", "src/b.rs");
+    assert!(row.kind.is_empty() && row.files.is_empty());
+    validate_alias(&row, &Config::default()).unwrap();
+    let moved = row.extra.get("moved").unwrap();
+    assert_eq!(moved.get("from").and_then(|v| v.as_str()), Some("src/a.rs"));
+    assert_eq!(moved.get("to").and_then(|v| v.as_str()), Some("src/b.rs"));
+    let log = Log {
+        rows: vec![row],
+        ..Log::default()
+    };
+    assert_eq!(Aliases::from_log(&log).expand("src/b.rs"), ["src/b.rs", "src/a.rs"]);
+}
+
+#[test]
+fn validate_alias_rejects_bad_shapes() {
+    let cfg = Config::default();
+    // self-pair
+    assert!(validate_alias(&Row::moved("t-1", "src/a.rs", "src/a.rs"), &cfg).is_err());
+    // empty ends
+    assert!(validate_alias(&Row::moved("t-1", "", "src/b.rs"), &cfg).is_err());
+    assert!(validate_alias(&Row::moved("t-1", "src/a.rs", ""), &cfg).is_err());
+    // not repo-relative
+    assert!(validate_alias(&Row::moved("t-1", "../a.rs", "src/b.rs"), &cfg).is_err());
+    // a carrier must not smuggle kind/files/ref
+    let mut kinded = Row::moved("t-1", "src/a.rs", "src/b.rs");
+    kinded.kind = "note".into();
+    assert!(validate_alias(&kinded, &cfg).is_err());
+    let mut filed = Row::moved("t-1", "src/a.rs", "src/b.rs");
+    filed.files = vec!["src/a.rs".into()];
+    assert!(validate_alias(&filed, &cfg).is_err());
+    let mut closed = Row::moved("t-1", "src/a.rs", "src/b.rs");
+    closed.reference = Some("A0000000000000000000000001".into());
+    assert!(validate_alias(&closed, &cfg).is_err());
+    // no moved object at all
+    assert!(validate_alias(&row_on("A0000000000000000000000001", &["src/a.rs"]), &cfg).is_err());
+    // anchors move too (git never sees them)
+    validate_alias(&Row::moved("t-1", "doc:a", "doc:b"), &cfg).unwrap();
+}
+
+#[test]
+fn missing_lists_only_open_unresolved_paths() {
+    let dir = std::env::temp_dir().join(format!("fael-missing-{}", ulid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("here.rs"), "// here\n").unwrap();
+    let present = row_on("A0000000000000000000000001", &["here.rs"]);
+    let gone = row_on("A0000000000000000000000002", &["away.rs"]);
+    let anchored = row_on("A0000000000000000000000003", &["doc:pricing"]);
+    let shut = row_on("A0000000000000000000000004", &["shut.rs"]);
+    let mut carrier = row_on("M0000000000000000000000001", &[]);
+    carrier.kind.clear();
+    carrier.files.clear();
+    carrier.extra.insert("moved".into(), json!({"from": "away.rs", "to": "here.rs"}));
+    let log = Log {
+        rows: vec![present, gone.clone(), anchored, shut.clone(), carrier],
+        closes: vec![Row::close("t-1", &shut.id, "done")],
+        ..Log::default()
+    };
+    let al = Aliases::default();
+    // away.rs is missing; here.rs exists; anchors/closed rows/carriers never list
+    assert_eq!(al.missing(&dir, &log), ["away.rs"]);
+    // ...unless a rename resolves it
+    let al2 = Aliases::from_log(&log);
+    assert!(al2.missing(&dir, &log).is_empty());
+    let _ = gone;
+}
+
+#[test]
 fn find_and_push_skip_alias_carrier_rows() {
     let mut moved = row_on("M0000000000000000000000001", &[]);
     moved.kind.clear();

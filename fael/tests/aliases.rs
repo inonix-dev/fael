@@ -251,3 +251,90 @@ fn non_ascii_rename_pushes_at_the_new_path() {
     commit_all(&d, "rename");
     assert!(hook_read(&d, "src/ข.rs").contains(&id[..8]));
 }
+
+#[test]
+fn uncommitted_mv_pushes_at_the_new_path() {
+    // chunk 3 §3.2: plain `mv` with no commit — the HEAD blob still links old → new
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    let id = add(&d, "src/a.rs");
+    std::fs::rename(d.join("src/a.rs"), d.join("src/b.rs")).unwrap();
+    // no commit and no session-start: the hook read itself finds the move
+    assert!(hook_read(&d, "src/b.rs").contains(&id[..8]));
+    let (ok, out, err) = fael(&d, &["find", "--files", "src/b.rs"], "");
+    assert!(ok, "{err}");
+    assert!(out.contains(&id[..8]), "{out}");
+}
+
+#[test]
+fn uncommitted_mv_needs_same_content_and_extension() {
+    // a different blob is not a move: rewriting a.rs elsewhere must not steal the row
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    let id = add(&d, "src/a.rs");
+    std::fs::remove_file(d.join("src/a.rs")).unwrap();
+    std::fs::write(d.join("src/b.rs"), "// something else entirely\n").unwrap();
+    let (ok, out, _) = fael(&d, &["find", "--files", "src/b.rs"], "");
+    assert!(ok && out.is_empty(), "{out}");
+    // ...but the old path still names the row
+    let (ok, out, err) = fael(&d, &["find", "--files", "src/a.rs"], "");
+    assert!(ok && out.contains(&id[..8]), "{err}");
+}
+
+#[test]
+fn mv_records_alias_for_anchors_git_cannot_see() {
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    // anchors need no file on disk — `add` never checked that
+    let (ok, out, err) = fael(&d, &["add", "decision", "pricing choice", "--files", "doc:pricing"], "");
+    assert!(ok, "{err}");
+    let id = out.split_whitespace().next().unwrap().to_string();
+
+    let (ok, out, err) = fael(&d, &["mv", "doc:pricing", "doc:pricing-2027"], "");
+    assert!(ok, "{err}");
+    assert!(out.contains("doc:pricing → doc:pricing-2027"), "{out}");
+
+    let (ok, out, err) = fael(&d, &["find", "--files", "doc:pricing-2027"], "");
+    assert!(ok && out.contains(&id[..8]), "{out} {err}");
+    // the carrier is never a result, even with --all
+    let (ok, out, err) = fael(&d, &["find", "--all"], "");
+    assert!(ok, "{err}");
+    assert!(!out.contains("doc:pricing → doc:pricing-2027"), "{out}");
+    // recording the same move twice is rejected, not appended
+    let (ok, _, err) = fael(&d, &["mv", "doc:pricing", "doc:pricing-2027"], "");
+    assert!(!ok, "duplicate mv should fail");
+    assert!(err.contains("already recorded"), "{err}");
+    // moving a path onto itself is rejected too
+    let (ok, _, _) = fael(&d, &["mv", "doc:pricing", "doc:pricing"], "");
+    assert!(!ok);
+}
+
+#[test]
+fn mv_file_resolves_doctor_gone() {
+    // `fael mv` with different content isolates the alias from the blob scan
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    add(&d, "src/a.rs");
+    let (ok, _, err) = fael(&d, &["mv", "src/a.rs", "src/z.rs"], "");
+    assert!(ok, "{err}");
+    std::fs::remove_file(d.join("src/a.rs")).unwrap();
+    std::fs::write(d.join("src/z.rs"), "// rewritten\n").unwrap();
+    let (ok, out, err) = fael(&d, &["find", "--files", "src/z.rs"], "");
+    assert!(ok && !out.is_empty(), "{out} {err}");
+    assert!(!doctor(&d).contains("[Gone]"), "{}", doctor(&d));
+}
+
+#[test]
+fn help_exits_zero_and_lists_mv() {
+    let _g = lock();
+    let d = repo();
+    for args in [&["--help"][..], &["help"][..], &["find", "--help"][..]] {
+        let (ok, out, err) = fael(&d, args, "");
+        assert!(ok, "{args:?} {err}");
+        assert!(out.contains("fael mv"), "{out}");
+    }
+}

@@ -83,6 +83,12 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
     let mut al = core::Aliases::from_pairs(renames);
     // `fael mv` rows are read from the log every time, never cached.
     al.merge(&core::Aliases::from_log(log));
+    // Moves git hasn't committed yet: live blob-hash comparison, never cached
+    // (an uncommitted tree changes under us). Costs nothing on a clean tree —
+    // one `exists` per distinct row file, no spawn — and only spawns git when
+    // a row's path is actually missing, i.e. exactly when a move may hide a
+    // row. Fail-open like everything else in this module.
+    al.merge_pairs(&uncommitted_pairs(&r.root, log, &al));
     al
 }
 
@@ -157,6 +163,119 @@ fn parse_log(out: &str) -> Vec<(String, String)> {
         }
     }
     pairs
+}
+
+/// Pairs for moves git hasn't committed yet (`mv a b`, `git mv a b` without
+/// the commit). For every path an open row names that is gone from the disk,
+/// compare its HEAD blob against untracked and staged-new files with the same
+/// extension. One spawn per git question, batched; anything failing is no
+/// pairs (fail-open). Caps keep a huge worktree from stalling a hook.
+fn uncommitted_pairs(
+    root: &Path,
+    log: &core::Log,
+    al: &core::Aliases,
+) -> Vec<(String, String)> {
+    let mut missing = al.missing(root, log);
+    if missing.is_empty() {
+        return vec![];
+    }
+    missing.truncate(200);
+    let Some(blobs) = git_blobs(root, &missing) else {
+        return vec![];
+    };
+    if blobs.is_empty() {
+        return vec![];
+    }
+    let mut news = git_new_files(root);
+    if news.is_empty() {
+        return vec![];
+    }
+    news.truncate(1000);
+    let mut pairs = vec![];
+    // hash only the new files whose extension matches some missing old path
+    for old in missing.iter().filter(|o| blobs.contains_key(*o)) {
+        let ext = extension(old);
+        let cands: Vec<&String> = news.iter().filter(|n| extension(n) == ext).collect();
+        if cands.is_empty() {
+            continue;
+        }
+        if let Some(hashes) = git_hash_object(root, &cands)
+            && let Some(want) = blobs.get(old)
+        {
+            for (n, h) in cands.iter().zip(hashes.iter()) {
+                if h == want && *n != old {
+                    pairs.push((old.clone(), (*n).clone()));
+                }
+            }
+        }
+    }
+    pairs
+}
+
+/// The file-name extension (`rs` for `src/a.rs`, `""` for `Makefile`) — a
+/// move keeps it, so it bounds which new files get hashed per missing old.
+fn extension(p: &str) -> &str {
+    p.rsplit('/').next().unwrap_or(p).rsplit_once('.').map(|(_, e)| e).unwrap_or("")
+}
+
+/// HEAD blob per path, one spawn: `git ls-tree HEAD -z -- <paths>`. `None` =
+/// no HEAD (unborn branch, not a repo) or git failing — fail-open.
+fn git_blobs(root: &Path, paths: &[String]) -> Option<std::collections::HashMap<String, String>> {
+    let mut args = vec!["ls-tree", "HEAD", "-z", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let o = Command::new("git").args(&args).current_dir(root).output().ok()?;
+    if !o.status.success() {
+        return None;
+    }
+    let mut blobs = std::collections::HashMap::new();
+    for e in String::from_utf8_lossy(&o.stdout).split('\0') {
+        // `100644 blob <sha>\t<path>`
+        if let Some((meta, path)) = e.split_once('\t')
+            && meta.split(' ').nth(1) == Some("blob")
+            && let Some(sha) = meta.split(' ').nth(2)
+        {
+            blobs.insert(path.to_string(), sha.to_string());
+        }
+    }
+    Some(blobs)
+}
+
+/// Untracked files plus staged-new ones (`git mv` without commit stages the
+/// new name) — where an uncommitted move's target lives. NUL-separated, so
+/// non-ASCII names survive.
+fn git_new_files(root: &Path) -> Vec<String> {
+    let mut out = vec![];
+    for args in [
+        &["ls-files", "--others", "--exclude-standard", "-z"][..],
+        &["diff", "--cached", "--name-only", "-z", "--diff-filter=A", "--"][..],
+    ] {
+        if let Ok(o) = Command::new("git").args(args).current_dir(root).output()
+            && o.status.success()
+        {
+            out.extend(
+                String::from_utf8_lossy(&o.stdout)
+                    .split('\0')
+                    .filter(|p| !p.is_empty())
+                    .map(String::from),
+            );
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Blob hashes for worktree files, one spawn, order kept (caller zips).
+fn git_hash_object(root: &Path, files: &[&String]) -> Option<Vec<String>> {
+    let mut args = vec!["hash-object", "--"];
+    args.extend(files.iter().map(|s| s.as_str()));
+    let o = Command::new("git").args(&args).current_dir(root).output().ok()?;
+    (o.status.success()).then(|| {
+        String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .map(String::from)
+            .collect()
+    })
 }
 
 /// Write the cache atomically (tmp + rename) and keep `.fael/.gitignore`

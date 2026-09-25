@@ -19,16 +19,18 @@ const USAGE: &str = "usage:
   fael close <id> \"<why>\"
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
   fael keys [glob]
-   fael kickoff [file|anchor]
-   fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
-   fael stats                  tokens fael has put into context, per machine
-   fael doctor [--fix]
-   fael compact [--writer id] [--before yyyy-mm] [--prune]
-   fael import <path> [--map old/=new/]
-   fael mcp                      MCP server on stdio
-   fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
-   fael --version
- every command takes --json";
+  fael kickoff [file|anchor]
+  fael mv <old> <new>           record a move git can't see (anchors, uncommitted rewrites)
+  fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
+  fael stats                  tokens fael has put into context, per machine
+  fael doctor [--fix]
+  fael compact [--writer id] [--before yyyy-mm] [--prune]
+  fael import <path> [--map old/=new/]
+  fael mcp                      MCP server on stdio
+  fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
+  fael help | fael --help | fael <cmd> --help
+  fael --version
+  every command takes --json";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -45,6 +47,13 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         println!("fael {}", env!("CARGO_PKG_VERSION"));
         return Ok(ExitCode::SUCCESS);
     }
+    // `fael help`, `fael --help`, `fael <cmd> --help` — usage on stdout, exit 0
+    if argv.first().is_some_and(|c| c == "help")
+        || argv.iter().any(|x| x == "--help" || x == "-h")
+    {
+        println!("{USAGE}");
+        return Ok(ExitCode::SUCCESS);
+    }
     let a = Args::parse(argv)?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
     let rest = a.pos.get(1..).unwrap_or_default();
@@ -54,6 +63,7 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
         ("find", [] | [_]) => find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("keys", [] | [_]) => keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("mv", [old, new]) => mv(&a, old, new).map(|()| ExitCode::SUCCESS),
         ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
         ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
         ("doctor", []) => maintain::doctor(&a),
@@ -287,6 +297,33 @@ fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
 
 fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>), String> {
     core::close_row(&r.fael, &read(r), &r.cfg, &stamp(r), id, why)
+}
+
+/// Record that `old` moved to `new` — for what git can't see (anchors,
+/// uncommitted rewrites, repos without git). Appends an alias row; the log
+/// stays append-only, nothing is rewritten.
+fn mv(a: &Args, old: &str, new: &str) -> Result<(), String> {
+    let r = repo()?;
+    let norm = core::normalize_files(&[old.to_string(), new.to_string()], &r.cwd, &r.root)?;
+    let (from, to) = (&norm[0], &norm[1]);
+    if from == to {
+        return Err(format!(
+            "rejected: {from:?} is already itself — `fael mv` needs two different paths"
+        ));
+    }
+    let log = read(&r);
+    if core::Aliases::from_log(&log).forward(from).contains(to) {
+        return Err(format!(
+            "rejected: {from} → {to} is already recorded — `fael find --files {to}` shows the rows"
+        ));
+    }
+    let (row, _) = core::mv_row(&r.fael, &r.cfg, &stamp(&r), from, to)?;
+    if a.has("json") {
+        println!("{}", row.to_line());
+    } else {
+        println!("{} → {from} → {to}", row.id);
+    }
+    Ok(())
 }
 
 fn find(a: &Args, text: Option<&String>) -> Result<(), String> {

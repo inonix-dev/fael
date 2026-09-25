@@ -171,6 +171,33 @@ impl Aliases {
             }
         }
     }
+
+    /// Paths an open row names that resolve nowhere on disk, even through
+    /// this set — the candidates `fael mv` and the uncommitted-move scan
+    /// check. Anchors never count (they are not paths), nor do closed or
+    /// superseded rows, nor paths a known rename already resolves.
+    pub fn missing(&self, root: &std::path::Path, log: &Log) -> Vec<String> {
+        let hide: HashSet<&str> = crate::closed(log)
+            .union(&crate::superseded(log))
+            .copied()
+            .collect();
+        let mut seen = HashSet::new();
+        let mut out = vec![];
+        for r in &log.rows {
+            if hide.contains(r.id.as_str()) || is_alias_row(r) {
+                continue;
+            }
+            for f in &r.files {
+                if anchor(f).is_some() || !seen.insert(f.clone()) {
+                    continue;
+                }
+                if self.forward(f).iter().all(|p| !root.join(p).exists()) {
+                    out.push(f.clone());
+                }
+            }
+        }
+        out
+    }
 }
 
 /// `path` is strictly inside directory `dir` (`dir/x`, never `dir` itself and
