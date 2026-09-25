@@ -138,3 +138,15 @@ fn install_all_three_idempotent_and_replaces_fapony_on_request() {
             .is_file()
     );
 }
+
+/// Native Windows has no HOME (only USERPROFILE) — install must still find
+/// the home dir. Dry run: nothing is written to the real home.
+#[test]
+fn install_without_home_env_falls_back_to_os_home() {
+    let o = Command::new(env!("CARGO_BIN_EXE_fael"))
+        .args(["install", "--dry-run"])
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}

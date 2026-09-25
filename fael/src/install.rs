@@ -72,7 +72,7 @@ impl Ctx {
 }
 
 pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), String> {
-    let home = PathBuf::from(std::env::var_os("HOME").ok_or("fael install: HOME is not set")?);
+    let home = crate::home().ok_or("fael install: cannot find the home directory")?;
     let exe = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .map_err(|e| format!("fael install: where am I? {e}"))?

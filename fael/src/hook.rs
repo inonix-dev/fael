@@ -576,7 +576,7 @@ fn session_start(e: &Event) -> Reply {
 // excludesFile or a worktree's common info/exclude are missed until another
 // stamp moves; `fael doctor` always asks git.
 fn check_ignore_hit(root: &Path) -> bool {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let home = crate::home().unwrap_or_default();
     let xdg = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home.join(".config"));
@@ -693,8 +693,9 @@ fn state_dir() -> PathBuf {
     {
         return PathBuf::from(d);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".local/state/fael")
+    crate::home()
+        .unwrap_or_else(|| ".".into())
+        .join(".local/state/fael")
 }
 
 /// Every injection into context, per machine — never in git. Fails open:

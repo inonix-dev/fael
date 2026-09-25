@@ -180,6 +180,15 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// `.fael/config.toml` — missing file = defaults, a broken file = error.
+/// The user's home: `HOME` first (git and Git Bash on Windows honour it too,
+/// and tests set it), else the OS answer (`USERPROFILE` on Windows).
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .or_else(std::env::home_dir)
+}
+
 fn config(path: &Path) -> Result<Config, String> {
     let Ok(s) = std::fs::read_to_string(path) else {
         return Ok(Config::default());
