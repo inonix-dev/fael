@@ -26,6 +26,7 @@ const USAGE: &str = "usage:
    fael import <path> [--map old/=new/]
    fael mcp                      MCP server on stdio
    fael install [--client claude|codex|opencode] [--dry-run] [--replace-fapony]
+   fael --version
  every command takes --json";
 
 fn main() -> ExitCode {
@@ -39,6 +40,10 @@ fn main() -> ExitCode {
 }
 
 fn run(argv: Vec<String>) -> Result<ExitCode, String> {
+    if matches!(argv.as_slice(), [v] if v == "--version" || v == "-V") {
+        println!("fael {}", env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
     let a = Args::parse(argv)?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
     let rest = a.pos.get(1..).unwrap_or_default();
@@ -296,7 +301,16 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
     };
     let log = read(&r);
     let (rows, budget) = core::query(&log, &f, &r.cfg);
-    show(a, &log, &rows, budget)
+    show(a, &log, &rows, budget)?;
+    // --all in JSON: also the close rows naming a shown row, so a consumer can tell closed from open
+    if a.has("json") && f.all {
+        let shown: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        log.closes
+            .iter()
+            .filter(|c| c.reference.as_deref().is_some_and(|id| shown.contains(id)))
+            .for_each(|c| println!("{}", c.to_line()));
+    }
+    Ok(())
 }
 
 fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
@@ -306,7 +320,12 @@ fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
         ..Filter::default()
     };
     let log = read(&r);
-    show(a, &log, &core::brief(&log, &f), r.cfg.kickoff_tokens)
+    show(
+        a,
+        &log,
+        &core::kickoff(&log, &f, &r.root),
+        r.cfg.kickoff_tokens,
+    )
 }
 
 fn show(a: &Args, log: &Log, rows: &[&Row], budget: usize) -> Result<(), String> {

@@ -686,6 +686,40 @@ fn import_map_rewrites_prefixes_not_anchors() {
 }
 
 #[test]
+fn import_spec_fills_empty_files() {
+    let r = root();
+    let fael = fael_of(&r);
+    let src = r.join("old");
+    fs::create_dir_all(&src).unwrap();
+    let lines = [
+        r#"{"ts":"2026-07-30T05:31:40.114Z","agent":"a","id":"mus00001","kind":"decision","text":"t","spec":"old/PLAN-x.md"}"#,
+        r#"{"ts":"2026-07-30T05:31:40.114Z","agent":"a","id":"mus00002","kind":"decision","text":"t","spec":"PLAN-x chunk 3 notes"}"#,
+        r#"{"ts":"2026-07-30T05:31:40.114Z","agent":"a","id":"mus00003","kind":"decision","text":"t","spec":"PLAN-y.md","files":["a.rs"]}"#,
+        r#"{"ts":"2026-07-30T05:31:40.114Z","id":"mus00004","kind":"bug","text":"t","spec":"old/PLAN-z.md"}"#,
+        r#"{"ts":"2026-07-30T05:31:40.114Z","agent":"a","id":"mus00005","kind":"synced","text":"","spec":"old/PLAN-z.md"}"#,
+        r#"{"ts":"2026-07-30T05:31:41.114Z","kind":"close","id":"mus00004","text":"done"}"#,
+    ];
+    fs::write(src.join("log.jsonl"), lines.join("\n") + "\n").unwrap();
+    let opts = ImportOpts {
+        maps: vec![("old/".into(), "new/".into())],
+    };
+    import(&fael, &src, &[], &opts).unwrap();
+    let rows = read(&fael).rows;
+    let files = |id: &str| rows.iter().find(|r| r.id == id).unwrap().files.clone();
+    assert_eq!(files("mus00001"), vec!["new/PLAN-x.md"]);
+    assert!(files("mus00002").is_empty());
+    assert_eq!(files("mus00003"), vec!["a.rs"]);
+    // no `agent` is still fapony: mapped kind, writer, spec
+    let r4 = rows.iter().find(|r| r.id == "mus00004").unwrap();
+    assert_eq!((r4.kind.as_str(), r4.by.as_str()), ("issue", "legacy"));
+    assert_eq!(files("mus00004"), vec!["new/PLAN-z.md"]);
+    assert!(files("mus00005").is_empty());
+    // a close naming its target in `id` folds, not a duplicate
+    assert_eq!(rows.iter().filter(|r| r.id == "mus00004").count(), 1);
+    assert!(r4.extra.contains_key("closed"));
+}
+
+#[test]
 fn import_native_fael_log() {
     let r = root();
     let fael = fael_of(&r);

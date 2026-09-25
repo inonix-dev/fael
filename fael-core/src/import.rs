@@ -8,8 +8,10 @@
 //! Fapony legacy mapping: `agent`→`by` · `bug`→`issue` · `close` rows fold
 //! into their target's `closed` (or ride the companion file when the target
 //! isn't here) · cut kinds → `note` with the original in `legacy_kind` ·
-//! missing id → `legacy-<sha1 8 hex of the line>`. Everything else —
-//! `spec`, `key`, unknown fields — round-trips through `Row::extra` untouched.
+//! missing id → `legacy-<sha1 8 hex of the line>` · no `files` but a
+//! path-shaped `spec` (the plan the row was filed against) → `files = [spec]`,
+//! so kickoff on that plan finds it (rows with empty text excepted). Everything else — `spec` itself, `key`,
+//! unknown fields — round-trips through `Row::extra` untouched.
 
 use crate::compact::fold;
 use crate::log::{collect_files, dedupe_ids, is_marker, lock, tmp_rename};
@@ -169,7 +171,8 @@ fn convert(
     let Value::Object(mut m) = v else {
         return Err("not a JSON object".into());
     };
-    if m.contains_key("agent") && !m.contains_key("by") {
+    // `by` is required in fael; early fapony rows lack `agent` too
+    if !m.contains_key("by") {
         return legacy(m, line, allowed, opts);
     }
     if m.get("id")
@@ -199,6 +202,17 @@ fn legacy(
     allowed: &[String],
     opts: &Opts,
 ) -> Result<Converted, String> {
+    // some fapony closes name their target in `id`, not `ref`
+    let no_ref = m
+        .get("ref")
+        .and_then(Value::as_str)
+        .is_none_or(|r| r.trim().is_empty());
+    if m.get("kind").and_then(Value::as_str) == Some("close")
+        && no_ref
+        && let Some(target) = m.remove("id")
+    {
+        m.insert("ref".into(), target);
+    }
     let id = m
         .get("id")
         .and_then(Value::as_str)
@@ -236,6 +250,24 @@ fn legacy(
         "note".to_string()
     };
     m.insert("kind".into(), Value::String(mapped));
+    // ponytail: "path-shaped" = one token, no whitespace; free-text specs stay extra-only.
+    // Empty-text rows (fapony `synced` bookkeeping) stay unanchored so kickoff isn't flooded.
+    let no_files = m
+        .get("files")
+        .and_then(Value::as_array)
+        .is_none_or(|a| a.is_empty())
+        && m.get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|t| !t.trim().is_empty());
+    let spec = m
+        .get("spec")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.contains(char::is_whitespace))
+        .map(str::to_string);
+    if let (true, Some(spec)) = (no_files, spec) {
+        m.insert("files".into(), Value::from(vec![spec]));
+    }
     let mut row: Row = serde_json::from_value(Value::Object(m)).map_err(|e| e.to_string())?;
     apply_maps(&mut row.files, opts);
     Ok(Converted::Add(row))

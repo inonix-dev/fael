@@ -9,7 +9,7 @@
 //! are closed and whose files are all gone from the worktree.
 
 use crate::log::{collect_files, dedupe_ids, lock, month_of, parse, tmp_rename};
-use crate::{Row, anchor, ulid};
+use crate::{Row, ulid};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -213,18 +213,6 @@ pub(crate) fn fold(rows: &mut [Row], closes: &[Row]) -> Vec<(String, Row)> {
 /// legacy and are never pruned.
 fn prune(rows: &mut Vec<Row>, root: &Path) -> usize {
     let before = rows.len();
-    rows.retain(|r| {
-        if !r.extra.contains_key("closed") || r.files.is_empty() {
-            return true;
-        }
-        let mut all_gone = true;
-        for f in &r.files {
-            if anchor(f).is_some() || root.join(f).exists() {
-                all_gone = false;
-                break;
-            }
-        }
-        !all_gone
-    });
+    rows.retain(|r| !r.extra.contains_key("closed") || !crate::gone(root, r));
     before - rows.len()
 }

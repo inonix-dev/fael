@@ -10,7 +10,7 @@
 
 use crate::{Filter, Repo, core, git, read, repo_at};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -471,6 +471,14 @@ fn edits_path(session: &str, root: &Path) -> PathBuf {
     state_dir().join("sessions").join(format!("{key}.jsonl"))
 }
 
+/// Ids already pushed in this session, one per line.
+// ponytail: after the client compacts its context the pushed text may be gone, yet the
+// row stays "seen" — add a reset on the compact hook if agents miss rows because of it.
+fn seen_path(session: &str, root: &Path) -> PathBuf {
+    let key = session_key(&format!("{session}\0{}", root.to_string_lossy()));
+    state_dir().join("sessions").join(format!("{key}.seen"))
+}
+
 /// One `{"path","at"}` line per edit event, in order — (path, at ms). A torn
 /// or unreadable line is skipped; any error is an empty list.
 fn session_edits(path: &Path) -> Vec<(String, i64)> {
@@ -534,7 +542,7 @@ fn session_start(e: &Event) -> Reply {
         Some(c) => c,
         None => return no(),
     };
-    let rows = core::brief(&c.log, &Filter::default());
+    let rows = core::kickoff(&c.log, &Filter::default(), &c.repo.root);
     let adopted = c.repo.fael.join("log").is_dir();
     let mut context = match (rows.is_empty(), adopted) {
         (true, false) => None,
@@ -609,19 +617,22 @@ fn check_ignore_hit(root: &Path) -> bool {
     {
         return hit;
     }
-    let hit = git_check_ignore(root);
+    let hit = ignore_source(root).is_some_and(|s| !deliberate(&s));
     let _ = std::fs::create_dir_all(cache.parent().unwrap_or(root));
     let _ = std::fs::write(&cache, format!("{stamp}{}", u8::from(hit)));
     hit
 }
 
-fn git_check_ignore(root: &Path) -> bool {
-    std::process::Command::new("git")
-        .args(["check-ignore", "-q", ".fael/log"])
-        .current_dir(root)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// Which ignore rule keeps `.fael/log` out of git (`git check-ignore -v`'s
+/// `<source>:<line>:<pattern>\t<path>`), or `None` when it is tracked.
+pub(crate) fn ignore_source(root: &Path) -> Option<String> {
+    crate::git(root, &["check-ignore", "-v", ".fael/log"])
+}
+
+/// `.git/info/exclude` is local to this clone and never shared, so ignoring the log
+/// there is a choice (a public repo keeping its memory private), not a mistake.
+pub(crate) fn deliberate(source: &str) -> bool {
+    source.replace('\\', "/").contains("info/exclude:")
 }
 
 // --- read / edit push ---
@@ -665,11 +676,30 @@ fn push(e: &Event, event: &str) -> Reply {
     if event == "edit" && !c.session.is_empty() && c.repo.fael.join("log").is_dir() {
         record_edits(&edits_path(&c.session, &c.repo.root), &files);
     }
-    let rows = core::push(&c.log, &files);
+    let mut rows = core::push(&c.log, &files);
+    // a row already pushed this session is still in the agent's context — say it once
+    let seen = (!c.session.is_empty()).then(|| seen_path(&c.session, &c.repo.root));
+    if let Some(p) = &seen {
+        let old = std::fs::read_to_string(p).unwrap_or_default();
+        let old: HashSet<&str> = old.lines().collect();
+        rows.retain(|r| !old.contains(r.id.as_str()));
+    }
     if rows.is_empty() {
         return no();
     }
     let body = core::render(&c.log, &rows, c.repo.cfg.push_tokens);
+    if let Some(p) = &seen {
+        // only what fit the budget was said; the cut rows may push on a later read
+        let n = body.lines().filter(|l| l.starts_with("- [")).count();
+        let shown: String = rows.iter().take(n).map(|r| format!("{}\n", r.id)).collect();
+        use std::io::Write;
+        let _ = std::fs::create_dir_all(p.parent().unwrap_or(&c.repo.root));
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .and_then(|mut f| f.write_all(shown.as_bytes()));
+    }
     let context = format!("fael mem for {}:\n{body}", files.join(", "));
     record_usage(
         &c.client,
