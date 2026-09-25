@@ -9,7 +9,8 @@ part=${1:-patch}
 case $part in patch | minor | major) ;; *) echo "usage: $0 [patch|minor|major]" >&2; exit 2 ;; esac
 
 [ -z "$(git status --porcelain)" ] || { echo "release: working tree is dirty — commit or stash first" >&2; exit 1; }
-prs=$(gh pr list --state open --base main --json number --jq '[.[].number | "#\(.)"] | join(" ")')
+# dependabot PRs don't block — they carry no work of ours
+prs=$(gh pr list --state open --base main --json number,author --jq '[.[] | select(.author.login != "app/dependabot") | "#\(.number)"] | join(" ")')
 [ -z "$prs" ] || { echo "release: open PR(s) into main: $prs — merge or close them first" >&2; exit 1; }
 git checkout -q main
 git pull -q --ff-only
@@ -40,7 +41,22 @@ git commit -q -am "release v$new"
 git tag -a "v$new" -m "release v$new"
 git push -q origin main --follow-tags
 
-echo "v$old -> v$new pushed. Watch: gh run watch \$(gh run list --workflow release.yml -L1 --json databaseId --jq '.[0].databaseId')"
+echo "v$old -> v$new pushed."
 
 # owner's machine: pull every fael worktree onto the new main (alias fael-sync); skipped where `repos` is absent
 if command -v repos >/dev/null 2>&1; then repos fael sync; fi
+
+# wait for the tag's release.yml (GitHub Release + npm + brew), then move this machine's npm install onto it
+run=
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  run=$(gh run list --workflow release.yml --branch "v$new" -L1 --json databaseId --jq '.[0].databaseId // empty')
+  [ -n "$run" ] && break
+  sleep 5
+done
+[ -n "$run" ] || { echo "release: no release.yml run for v$new after 60s — check Actions" >&2; exit 1; }
+gh run watch "$run" --exit-status >/dev/null || { echo "release: release.yml run $run failed — gh run rerun $run --failed" >&2; exit 1; }
+echo "release.yml $run green"
+if npm ls -g @inonix/fael >/dev/null 2>&1; then
+  npm i -g "@inonix/fael@$new" >/dev/null && echo "local fael -> $new (npm)" \
+    || echo "release: npm has no $new yet (registry lag) — run: npm i -g @inonix/fael@$new" >&2
+fi
