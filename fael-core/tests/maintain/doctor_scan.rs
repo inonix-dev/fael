@@ -1,6 +1,5 @@
 use crate::common::*;
 use fael_core::*;
-use std::fs;
 
 #[test]
 fn clean_log_passes() {
