@@ -8,7 +8,16 @@ fn install(home: &Path, args: &[&str]) -> String {
         .arg("install")
         .args(args)
         .env("HOME", home)
-        .env("PATH", "/usr/bin:/bin") // no claude CLI: MCP is printed, not run
+        // fael on PATH (install refuses without it), no claude CLI: MCP is printed, not run
+        .env(
+            "PATH",
+            std::env::join_paths([
+                Path::new(env!("CARGO_BIN_EXE_fael")).parent().unwrap(),
+                Path::new("/usr/bin"),
+                Path::new("/bin"),
+            ])
+            .unwrap(),
+        )
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -65,7 +74,7 @@ fn install_all_three_idempotent_and_replaces_fapony_on_request() {
     assert!(s.starts_with("{\n  \"theme\""), "key order kept: {s}");
     for sub in ["stop", "session-start", "read", "edit"] {
         assert!(
-            s.contains(&format!(" hook {sub} --client claude")),
+            s.contains(&format!("\"fael hook {sub} --client claude\"")),
             "{sub}: {s}"
         );
     }
@@ -137,6 +146,23 @@ fn install_all_three_idempotent_and_replaces_fapony_on_request() {
         home.join(".config/opencode/plugins/fapony-session-start.ts.disabled")
             .is_file()
     );
+}
+
+/// Configs call bare `fael`, so install refuses when PATH cannot find it
+/// (e.g. run through npx) instead of wiring hooks that silently never run.
+#[test]
+fn install_refuses_when_fael_not_on_path() {
+    let home = std::env::temp_dir().join(format!("fael-install-{}", fael_core::ulid()));
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_fael"))
+        .arg("install")
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not on PATH"));
+    assert!(!home.join(".claude/settings.json").exists());
 }
 
 /// Native Windows has no HOME (only USERPROFILE) — install must still find
