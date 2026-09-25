@@ -31,6 +31,11 @@ struct Event {
     files: Vec<String>,
     #[serde(default, alias = "stop_hook_active")]
     stop_active: bool,
+    /// stop: the assistant's text since the session start, for the issue rule.
+    /// Any client that can see its own messages sends it; without it fael
+    /// falls back to reading `session` as a Claude-format transcript.
+    #[serde(default)]
+    text: Option<String>,
 }
 
 /// Neutral Reply (SPEC §9).
@@ -252,12 +257,11 @@ fn stop(e: &Event) -> Reply {
         vec![]
     };
     // bug rule: a marker in the transcript tail with no issue row since start
-    let mut bug_signal = None;
-    if let Some(t) = e.session.as_deref()
-        && Path::new(t).is_file()
-    {
-        bug_signal = bug_signal_from_transcript(Path::new(t), since_ms);
-    }
+    let bug_signal = match (&e.text, e.session.as_deref()) {
+        (Some(text), _) => has_bug_marker(text),
+        (None, Some(t)) if Path::new(t).is_file() => bug_signal_from_transcript(Path::new(t), since_ms),
+        _ => None,
+    };
     let bug_row_since = c.log.rows.iter().any(|r| {
         r.kind == "issue" && core::ts_ms(&r.ts).is_some_and(|ms| ms >= since_ms)
     });
