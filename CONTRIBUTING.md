@@ -41,9 +41,24 @@ cargo test --workspace --locked
 - **No abstraction for abstraction's sake** — no interface with one implementation, no scaffolding
   for a future that may not come.
 - **Prefer std** — a new dependency needs a reason a few lines of code can't cover.
-- **Small files** — 400 lines per `.rs` file, 100 per function (CI checks both). Past that, split
-  `x.rs` into `x.rs` + `x/` like `fael-core/src/query/`: memory is pushed per file, so small files
-  mean sharp, cheap context. Details in [AGENTS.md](AGENTS.md).
+
+## File size: no god files
+
+fael pushes memory **per file** — an agent that reads a small file gets the rows about that file
+and nothing else. A 1 000-line file makes every read expensive and every pushed row vague. So:
+
+- **400 lines per `.rs` file, 100 per function.** `scripts/file-size.sh` and clippy
+  `too_many_lines` enforce both in CI — run them before a commit.
+- **Past the limit, split `x.rs` into `x.rs` + `x/`** the way `fael-core/src/query/` is:
+  `x.rs` stays a thin entry (`mod` + `pub use` + a doc line naming each child), the children are
+  private. Public paths never change — callers and tests keep `fael_core::name`.
+- **Tests with more than one file:** `tests/<suite>/main.rs` + siblings (see `fael-core/tests/spec/`),
+  never `#[path]`. Shared helpers in `common.rs` next to `main.rs`.
+- **After a split, move the memory with it:** `fael mv <old> <new>` for each new file that took over
+  a topic the rows are about (one old path can point at several new ones). Git's rename detection
+  only catches a whole-file move.
+- The allowlist in `scripts/file-size.sh` is a ratchet: those files may shrink, never grow.
+  Delete a line once the file is split; never raise a number to get a commit through.
 
 ## Releasing (maintainers)
 
