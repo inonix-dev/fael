@@ -81,9 +81,12 @@ fn commit(d: &Path, msg: &str) {
     );
 }
 
-/// A transcript file created strictly before the next commit, so the commit
+/// A transcript file created strictly after the previous row and before the next commit, so the commit
 /// is newer than the session start even at 1-second git granularity.
 fn transcript(d: &Path, name: &str) -> PathBuf {
+    // a row filed just before must land in an earlier ms than the birthtime,
+    // or the hook (`>=` at ms precision) counts it as this session's row
+    std::thread::sleep(std::time::Duration::from_millis(5));
     let p = d.join(name);
     std::fs::write(&p, "").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));

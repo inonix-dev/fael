@@ -51,7 +51,11 @@ fn add_find_close_round_trip() {
     );
     assert!(ok, "{err}");
     let id = out.split_whitespace().next().unwrap().to_string();
-    assert!(out.contains(".fael/log/test-user-"), "{out}");
+    // Windows prints `\` separators
+    assert!(
+        out.replace('\\', "/").contains(".fael/log/test-user-"),
+        "{out}"
+    );
 
     let (ok, _, err) = fael(&d, &["add", "note", "x", "--files", "../elsewhere.rs"]);
     assert!(!ok && err.contains("outside the repo"), "{err}");
