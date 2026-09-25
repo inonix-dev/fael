@@ -42,7 +42,7 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by contacting the maintainer directly on GitHub ([@kire21b](https://github.com/kire21b))
+reported by emailing [innominix@gmail.com](mailto:innominix@gmail.com)
 rather than through a public issue. All complaints will be reviewed and
 investigated promptly and fairly.
 
