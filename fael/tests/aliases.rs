@@ -79,7 +79,11 @@ fn json(s: &str) -> String {
 fn add(d: &Path, files: &str) -> String {
     std::fs::write(d.join(files), "// v1\n").unwrap();
     commit_all(d, format!("add {files}").as_str());
-    let (ok, out, err) = fael(d, &["add", "decision", "choice about a", "--files", files], "");
+    let (ok, out, err) = fael(
+        d,
+        &["add", "decision", "choice about a", "--files", files],
+        "",
+    );
     assert!(ok, "{err}");
     out.split_whitespace().next().unwrap().to_string()
 }
@@ -173,4 +177,35 @@ fn resolve_false_returns_to_pre_resolver_matching() {
     assert!(ok && out.is_empty(), "{out}");
     let (ok, out, err) = fael(&d, &["find", "--files", "src/a.rs"], "");
     assert!(ok && out.contains(&id[..8]), "{err}");
+}
+
+#[test]
+fn no_renames_still_writes_the_cache_at_head() {
+    // --diff-filter=R lists no commits here; the head must still be HEAD, or
+    // every read/edit hook would re-run the full git log (01M3CTV9Y)
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    add(&d, "src/a.rs");
+    hook_read(&d, "src/a.rs");
+    let cache = std::fs::read_to_string(d.join(".fael/cache/aliases.json")).unwrap();
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    assert!(cache.contains(&head), "{cache}");
+}
+
+#[test]
+fn non_ascii_rename_pushes_at_the_new_path() {
+    // without -z git C-quotes these names and the pair never matches (01M3CTVA2)
+    let _g = lock();
+    let d = repo();
+    unsafe { std::env::set_var("FAEL_STATE_DIR", d.join("state")) };
+    let id = add(&d, "src/ก.rs");
+    git(&d, &["mv", "src/ก.rs", "src/ข.rs"]);
+    commit_all(&d, "rename");
+    assert!(hook_read(&d, "src/ข.rs").contains(&id[..8]));
 }

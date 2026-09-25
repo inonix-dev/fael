@@ -28,12 +28,10 @@ impl Aliases {
     pub fn from_log(log: &Log) -> Aliases {
         let mut a = Aliases::default();
         for r in &log.rows {
-            let got = r.extra.get("moved").and_then(|m| {
-                Some((
-                    m.get("from")?.as_str()?,
-                    m.get("to")?.as_str()?,
-                ))
-            });
+            let got = r
+                .extra
+                .get("moved")
+                .and_then(|m| Some((m.get("from")?.as_str()?, m.get("to")?.as_str()?)));
             if let Some((from, to)) = got
                 && !from.is_empty()
                 && !to.is_empty()
@@ -48,7 +46,11 @@ impl Aliases {
     /// Add pairs, skipping empties, self-pairs and ones already held.
     pub fn merge_pairs(&mut self, pairs: &[(String, String)]) {
         for (o, n) in pairs {
-            if !o.is_empty() && !n.is_empty() && o != n && !self.pairs.contains(&(o.clone(), n.clone())) {
+            if !o.is_empty()
+                && !n.is_empty()
+                && o != n
+                && !self.pairs.contains(&(o.clone(), n.clone()))
+            {
                 self.pairs.push((o.clone(), n.clone()));
             }
         }
@@ -150,9 +152,7 @@ impl Aliases {
 /// `path` is strictly inside directory `dir` (`dir/x`, never `dir` itself and
 /// never `dir2/x` — the `/` boundary matters).
 fn under(path: &str, dir: &str) -> bool {
-    path.len() > dir.len()
-        && path.starts_with(dir)
-        && path.as_bytes()[dir.len()] == b'/'
+    path.len() > dir.len() && path.starts_with(dir) && path.as_bytes()[dir.len()] == b'/'
 }
 
 /// The query is a parent directory of the new path: derive the matching old

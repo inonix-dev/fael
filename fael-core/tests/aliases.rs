@@ -35,10 +35,7 @@ fn expand_follows_chains() {
 #[test]
 fn expand_maps_zone_queries_across_dir_renames() {
     let a = al(&[("src/old/x.rs", "src/new/x.rs")]);
-    assert_eq!(
-        a.expand("src/new/x.rs"),
-        ["src/new/x.rs", "src/old/x.rs"]
-    );
+    assert_eq!(a.expand("src/new/x.rs"), ["src/new/x.rs", "src/old/x.rs"]);
     // a zone query for the new directory finds the old one
     let got = a.expand("src/new");
     assert!(got.contains(&"src/new".to_string()), "{got:?}");
@@ -59,7 +56,10 @@ fn expand_swap_pushes_both_sides() {
 #[test]
 fn expand_anchors_exact_only_and_globs_pass_through() {
     let a = al(&[("doc:pricing", "doc:pricing-2027")]);
-    assert_eq!(a.expand("doc:pricing-2027"), ["doc:pricing-2027", "doc:pricing"]);
+    assert_eq!(
+        a.expand("doc:pricing-2027"),
+        ["doc:pricing-2027", "doc:pricing"]
+    );
     // `/` inside an anchor ref is not a directory
     let b = al(&[("doc:a/x", "doc:b/x")]);
     assert_eq!(b.expand("doc:b/y"), ["doc:b/y"]);
@@ -84,10 +84,7 @@ fn current_cycle_and_dir_prefix() {
     assert_eq!(swap.current("src/a.rs"), None); // no single answer
     // a directory-level pair (from `fael mv`) maps everything under it
     let dir = al(&[("src/old", "src/new")]);
-    assert_eq!(
-        dir.current("src/old/x.rs").as_deref(),
-        Some("src/new/x.rs")
-    );
+    assert_eq!(dir.current("src/old/x.rs").as_deref(), Some("src/new/x.rs"));
     assert_eq!(dir.current("src/other/x.rs"), None);
     assert_eq!(dir.current("src/old2/x.rs"), None); // boundary: old2 ≠ old/
 }
@@ -157,10 +154,13 @@ fn find_and_push_skip_alias_carrier_rows() {
         rows: vec![row_on("A0000000000000000000000001", &["src/a.rs"]), moved],
         ..Log::default()
     };
-    let all = find(&log, &Filter {
-        all: true,
-        ..Filter::default()
-    });
+    let all = find(
+        &log,
+        &Filter {
+            all: true,
+            ..Filter::default()
+        },
+    );
     assert_eq!(all.len(), 1);
     assert_eq!(
         push(&log, &["doc:b".to_string()], &Aliases::from_log(&log)).len(),

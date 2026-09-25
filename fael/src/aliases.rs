@@ -37,8 +37,10 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
         return al;
     }
     let cached = read_cache(&r.fael);
-    let mut renames: Vec<(String, String)> =
-        cached.as_ref().map(|c| c.renames.clone()).unwrap_or_default();
+    let mut renames: Vec<(String, String)> = cached
+        .as_ref()
+        .map(|c| c.renames.clone())
+        .unwrap_or_default();
     let push_pair = |renames: &mut Vec<(String, String)>, p: (String, String)| {
         if !p.0.is_empty() && !p.1.is_empty() && p.0 != p.1 && !renames.contains(&p) {
             renames.push(p);
@@ -47,7 +49,10 @@ pub fn load(r: &Repo, log: &core::Log, refresh: bool) -> core::Aliases {
     if refresh {
         // incremental from the cached head; a bad head (rebase/force-push)
         // falls back to a full rebuild that replaces the cache
-        let inc = cached.as_ref().and_then(|c| git_renames(&r.root, Some(&c.head)));
+        let inc = cached
+            .as_ref()
+            .filter(|c| !c.head.is_empty())
+            .and_then(|c| git_renames(&r.root, Some(&c.head)));
         match inc {
             Some((head, pairs)) => {
                 for p in pairs {
@@ -89,61 +94,69 @@ fn read_cache(fael: &Path) -> Option<Cache> {
     (c.v == 1).then_some(c)
 }
 
-/// `git log -M --name-status --diff-filter=R --format=%H [<since>..HEAD]`.
-/// Returns the new head (the first commit listed, i.e. HEAD itself) and the
-/// rename pairs. An empty range is `Some` with no pairs — HEAD did not move.
-/// `None` = git missing, not a repo, or a bad `since` (rebase/force-push:
-/// the caller rebuilds from scratch).
+/// `git rev-parse HEAD`, then `git log -M -z --name-status --diff-filter=R
+/// --format=%H [<since>..]HEAD`. The head comes from `rev-parse`, never from
+/// the log: `--diff-filter=R` also filters commits, so the first sha listed
+/// is the newest *rename* commit, not HEAD. No HEAD (unborn branch, not a
+/// repo) is `Some(("", []))` so a cache still gets written and the hook
+/// never re-spawns. HEAD unchanged since `since` = `Some` with no pairs, one
+/// spawn. `None` = git missing or a bad `since` (rebase/force-push: the
+/// caller rebuilds from scratch).
 fn git_renames(root: &Path, since: Option<&str>) -> Option<(String, Vec<(String, String)>)> {
-    let range = since.map(|s| format!("{s}..HEAD"));
-    let mut args = vec![
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .ok()
+    };
+    let o = git(&["rev-parse", "--verify", "-q", "HEAD"])?;
+    let head = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    if !o.status.success() || head.is_empty() {
+        return Some((String::new(), vec![]));
+    }
+    if since == Some(head.as_str()) {
+        return Some((head, vec![]));
+    }
+    let range = since.map_or_else(|| head.clone(), |s| format!("{s}..{head}"));
+    let o = git(&[
         "log",
         "-M",
+        "-z",
         "--name-status",
         "--diff-filter=R",
         "--format=%H",
-    ];
-    if let Some(r) = &range {
-        args.push(r);
-    } else {
-        args.push("HEAD");
-    }
-    let o = Command::new("git").args(&args).current_dir(root).output().ok()?;
+        &range,
+    ])?;
     if !o.status.success() {
         return None;
     }
-    let (shas, pairs) = parse_log(&String::from_utf8_lossy(&o.stdout));
-    let head = shas.into_iter().next().or_else(|| since.map(String::from))?;
-    Some((head, pairs))
+    Some((head, parse_log(&String::from_utf8_lossy(&o.stdout))))
 }
 
-/// Split `git log` output into commit shas (full `%H` lines) and `(old, new)`
-/// pairs (`R<score>\t<old>\t<new>`). A tab inside a filename breaks the pair
-/// and the line is skipped — vanishingly rare, and skipping only loses one
-/// alias, never a row.
-fn parse_log(out: &str) -> (Vec<String>, Vec<(String, String)>) {
-    let mut shas = vec![];
+/// Pull `(old, new)` pairs out of `git log -z` output: NUL-separated tokens,
+/// `R<score>` followed by the old and new path. `-z` keeps paths raw — without
+/// it git C-quotes non-ASCII names and they never match a real path. Sha
+/// tokens (and the `\n` git puts before the next status) are skipped.
+fn parse_log(out: &str) -> Vec<(String, String)> {
     let mut pairs = vec![];
-    for line in out.lines() {
-        if line.len() == 40 && line.bytes().all(|b| b.is_ascii_hexdigit()) {
-            shas.push(line.to_string());
-        } else if let Some(rest) = line.strip_prefix('R') {
-            let mut it = rest.split('\t');
-            match (it.next(), it.next(), it.next()) {
-                (Some(score), Some(old), Some(new))
-                    if !score.is_empty()
-                        && score.bytes().all(|b| b.is_ascii_digit())
-                        && !old.is_empty()
-                        && !new.is_empty()
-                        && old != new =>
-                {
-                    pairs.push((old.to_string(), new.to_string()));
-                }
-                _ => {}
-            }
+    let mut it = out.split('\0').map(|t| t.trim_start_matches('\n'));
+    while let Some(t) = it.next() {
+        let is_rename = t
+            .strip_prefix('R')
+            .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+        if !is_rename {
+            continue;
+        }
+        if let (Some(old), Some(new)) = (it.next(), it.next())
+            && !old.is_empty()
+            && !new.is_empty()
+            && old != new
+        {
+            pairs.push((old.to_string(), new.to_string()));
         }
     }
-    (shas, pairs)
+    pairs
 }
 
 /// Write the cache atomically (tmp + rename) and keep `.fael/.gitignore`
@@ -207,26 +220,22 @@ mod tests {
     use super::parse_log;
 
     #[test]
-    fn parses_renames_and_shas() {
-        let out = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
-                   R100\tsrc/a.rs\tsrc/b.rs\n\
-                   R095\tsrc/old/x.rs\tsrc/new/x.rs\n\
-                   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
-        let (shas, pairs) = parse_log(out);
-        assert_eq!(shas.len(), 2);
+    fn parses_z_output() {
+        // real `git log -z` shape: sha\0, then \n before each status token
+        let out = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0\nR100\0src/a.rs\0src/b.rs\0\
+                   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\0\nR095\0src/ก.rs\0src/ข.rs\0";
         assert_eq!(
-            pairs,
+            parse_log(out),
             vec![
                 ("src/a.rs".to_string(), "src/b.rs".to_string()),
-                ("src/old/x.rs".to_string(), "src/new/x.rs".to_string()),
+                ("src/ก.rs".to_string(), "src/ข.rs".to_string()),
             ]
         );
     }
 
     #[test]
     fn skips_non_renames_and_self_pairs() {
-        // M lines never appear (--diff-filter=R) but must not parse as pairs
-        let out = "M\tsrc/a.rs\nR100\tsrc/a.rs\tsrc/a.rs\nR100\tsrc/a.rs\n";
-        assert!(parse_log(out).1.is_empty());
+        let out = "M\0src/a.rs\0\nR100\0src/a.rs\0src/a.rs\0\nR100\0src/a.rs\0";
+        assert!(parse_log(out).is_empty());
     }
 }
