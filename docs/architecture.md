@@ -1,8 +1,8 @@
 # fael architecture
 
 > **Status:** the log format and storage (§2, [format.md](format.md)) are implemented in `fael-core`, and so are
-> `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet); MCP, hooks and maintenance
-> commands are design. This page is the contract the code is built against —
+> `add` `close` `find` `keys` `kickoff` in the `fael` CLI (`find --branches` not yet), plus `fael mcp`
+> (stdio, 3 tools); hooks and maintenance commands are design. This page is the contract the code is built against —
 > when code and this page disagree, fix one of them in the same commit.
 
 fael is a memory log for agents that lives **inside the repo**: every agent (Claude Code, Codex, OpenCode, a chat

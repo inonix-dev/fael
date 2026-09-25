@@ -1,6 +1,9 @@
 //! fael CLI — add · close · find · keys · kickoff over fael-core.
 //! Output for people and agents is one markdown line per row, cut to a token budget;
-//! `--json` prints one JSON row per line, uncut, for programs.
+//! `--json` prints one JSON row per line, uncut, for programs. `fael mcp` serves the same
+//! add/close/find over stdio (see mcp.rs).
+
+mod mcp;
 
 use fael_core::{self as core, Config, Filter, Log, Row};
 use serde::Deserialize;
@@ -14,6 +17,7 @@ const USAGE: &str = "usage:
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
   fael keys [glob]
   fael kickoff [file|anchor]
+  fael mcp                      MCP server on stdio
 every command takes --json";
 
 fn main() -> ExitCode {
@@ -36,6 +40,7 @@ fn run(argv: Vec<String>) -> Result<(), String> {
         ("find", [] | [_]) => find(&a, rest.first()),
         ("keys", [] | [_]) => keys(&a, rest.first()),
         ("kickoff", [] | [_]) => kickoff(&a, rest.first()),
+        ("mcp", []) => mcp::serve(),
         _ => Err(USAGE.into()),
     }
 }
@@ -233,34 +238,63 @@ fn written(a: &Args, r: &Repo, row: &Row, path: &Path) {
 
 fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
     let r = repo()?;
-    let files = core::normalize_files(&a.files(), &r.cwd, &r.root)?;
-    let mut row = Row::new(&writer(&r), kind, text, files);
-    row.key = a.one("key");
-    let log = read(&r);
-    if let Some(s) = a.one("supersedes") {
-        row.supersedes = Some(core::resolve(&log, &s)?.id.clone());
-    }
-    stamp(&mut row, &r);
-    let path = core::add(&r.fael, &row, &r.cfg)?;
-    for w in core::warnings(&row, &log, &r.cfg) {
-        eprintln!("{w}");
-    }
+    let (row, path, warns) = add_row(
+        &r,
+        kind,
+        text,
+        &a.files(),
+        a.one("key"),
+        a.one("supersedes"),
+    )?;
+    warns.iter().for_each(|w| eprintln!("{w}"));
     written(a, &r, &row, &path);
     Ok(())
 }
 
+/// Normalise, stamp, validate, append — shared by the CLI and MCP. Returns the non-fatal warnings.
+fn add_row(
+    r: &Repo,
+    kind: &str,
+    text: &str,
+    files: &[String],
+    key: Option<String>,
+    supersedes: Option<String>,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    let files = core::normalize_files(files, &r.cwd, &r.root)?;
+    let mut row = Row::new(&writer(r), kind, text, files);
+    row.key = key;
+    let log = read(r);
+    if let Some(s) = supersedes {
+        row.supersedes = Some(core::resolve(&log, &s)?.id.clone());
+    }
+    stamp(&mut row, r);
+    let path = core::add(&r.fael, &row, &r.cfg)?;
+    let warns = core::warnings(&row, &log, &r.cfg);
+    Ok((row, path, warns))
+}
+
 fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
     let r = repo()?;
-    let log = read(&r);
-    let target = core::resolve(&log, id)?;
-    if core::closed(&log).contains(target.id.as_str()) {
-        eprintln!("fael: {} is already closed — closing it again", target.id);
-    }
-    let mut row = Row::close(&writer(&r), &target.id, why);
-    stamp(&mut row, &r);
-    let path = core::close(&r.fael, &row, &r.cfg)?;
+    let (row, path, warns) = close_row(&r, id, why)?;
+    warns.iter().for_each(|w| eprintln!("{w}"));
     written(a, &r, &row, &path);
     Ok(())
+}
+
+fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>), String> {
+    let log = read(r);
+    let target = core::resolve(&log, id)?;
+    let mut warns = vec![];
+    if core::closed(&log).contains(target.id.as_str()) {
+        warns.push(format!(
+            "fael: {} is already closed — closing it again",
+            target.id
+        ));
+    }
+    let mut row = Row::close(&writer(r), &target.id, why);
+    stamp(&mut row, r);
+    let path = core::close(&r.fael, &row, &r.cfg)?;
+    Ok((row, path, warns))
 }
 
 fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
@@ -275,11 +309,17 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
         all: a.has("all"),
     };
     let log = read(&r);
+    let (rows, budget) = query(&r, &log, &f);
+    show(a, &log, &rows, budget)
+}
+
+/// No filter = the session brief under the kickoff budget; otherwise find under the find budget.
+fn query<'a>(r: &Repo, log: &'a Log, f: &Filter) -> (Vec<&'a Row>, usize) {
     if f.is_empty() && !f.all {
-        let rows = core::brief(&log, &f);
-        return show(a, &log, &rows, r.cfg.kickoff_tokens);
+        (core::brief(log, f), r.cfg.kickoff_tokens)
+    } else {
+        (core::find(log, f), r.cfg.find_tokens)
     }
-    show(a, &log, &core::find(&log, &f), r.cfg.find_tokens)
 }
 
 fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
