@@ -73,13 +73,13 @@ impl Ctx {
 
 pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), String> {
     let home = crate::home().ok_or("fael install: cannot find the home directory")?;
-    // Configs call bare `fael`, never current_exe(): under npx that path is a
-    // disposable cache dir, and brew/npm/cargo upgrades move it too.
-    // ponytail: bare name means PATH at hook time must find fael — so demand it now
-    if !dry && !["fael", "fael.exe", "fael.cmd"].into_iter().any(on_path) {
-        return Err("fael install: fael is not on PATH, so the hooks could not run it — install it first: npm i -g @inonix/fael, brew install inonix-dev/tap/fael or cargo install fael".into());
-    }
-    let exe = "fael".to_string();
+    // Configs never use current_exe(): under npx that is a disposable cache dir.
+    // ponytail: resolved from PATH now, so PATH at hook time must find it too
+    let exe = match hook_exe() {
+        Some(e) => e,
+        None if dry => "fael".into(),
+        None => return Err("fael install: fael is not on PATH, so the hooks could not run it — install it first: brew install inonix-dev/tap/fael, npm i -g @inonix/fael or cargo install fael".into()),
+    };
     let c = Ctx {
         home,
         exe,
@@ -139,6 +139,36 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
         skill(&c, &s)?;
     }
     Ok(())
+}
+
+/// The command client configs call: bare `fael`, except when PATH's `fael` is
+/// npm's cargo-dist wrapper (run-fael.js, ~70 ms of Node per spawn vs ~3 ms) —
+/// then the native binary it wraps, which stays put across `npm i -g` upgrades.
+fn hook_exe() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let hit = std::env::split_paths(&path).find_map(|d| {
+        ["fael", "fael.exe", "fael.cmd"]
+            .into_iter()
+            .map(|n| d.join(n))
+            .find(|p| p.is_file())
+    })?;
+    let real = |pkg: &Path| {
+        ["fael", "fael.exe"]
+            .into_iter()
+            .map(|n| pkg.join("node_modules/.bin_real").join(n))
+            .find(|p| p.is_file())
+    };
+    let wrapped = hit
+        .canonicalize()
+        .ok()
+        .filter(|t| t.file_name().is_some_and(|n| n == "run-fael.js"))
+        .and_then(|t| t.parent().and_then(real))
+        // Windows npm: shims sit in <prefix>/, packages in <prefix>/node_modules/
+        .or_else(|| {
+            hit.parent()
+                .and_then(|d| real(&d.join("node_modules/@inonix/fael")))
+        });
+    Some(wrapped.map_or("fael".into(), |p| p.to_string_lossy().into_owned()))
 }
 
 fn on_path(bin: &str) -> bool {

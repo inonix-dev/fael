@@ -165,6 +165,43 @@ fn install_refuses_when_fael_not_on_path() {
     assert!(!home.join(".claude/settings.json").exists());
 }
 
+/// npm's `fael` is cargo-dist's Node wrapper; hooks must call the native
+/// binary it wraps, not pay Node startup on every tool call.
+#[cfg(unix)]
+#[test]
+fn install_points_hooks_past_the_npm_wrapper() {
+    let root = std::env::temp_dir().join(format!("fael-npm-{}", fael_core::ulid()));
+    let home = root.join("home");
+    let pkg = root.join("prefix/lib/node_modules/@inonix/fael");
+    let real = pkg.join("node_modules/.bin_real/fael");
+    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(root.join("prefix/bin")).unwrap();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::write(pkg.join("run-fael.js"), "").unwrap();
+    std::fs::write(&real, "").unwrap();
+    std::os::unix::fs::symlink(
+        "../lib/node_modules/@inonix/fael/run-fael.js",
+        root.join("prefix/bin/fael"),
+    )
+    .unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_fael"))
+        .args(["install", "--client", "claude"])
+        .env("HOME", &home)
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", root.join("prefix/bin").display()),
+        )
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let s = read(&home.join(".claude/settings.json"));
+    let want = format!(
+        "{} hook stop --client claude",
+        real.canonicalize().unwrap().display()
+    );
+    assert!(s.contains(&want), "{want}\n{s}");
+}
+
 /// Native Windows has no HOME (only USERPROFILE) — install must still find
 /// the home dir. Dry run: nothing is written to the real home. A machine with
 /// no client installed (CI) still fails later with "found no Claude Code",
