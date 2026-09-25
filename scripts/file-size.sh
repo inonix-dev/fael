@@ -5,11 +5,7 @@ set -eu
 LIMIT=400
 # ponytail: ratchet — path + today's size; delete the line once the file is split
 ALLOW='
-fael/src/aliases.rs 405
-fael/src/hook.rs 1169
-fael/src/install.rs 541
 fael/src/main.rs 425
-fael/tests/hook.rs 442
 '
 cd "$(dirname "$0")/.."
 find fael-core/src fael-core/tests fael/src fael/tests -name '*.rs' -exec wc -l {} + |
