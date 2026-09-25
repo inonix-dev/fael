@@ -291,6 +291,14 @@ fn session_start_and_read_push() {
         ok && out.contains("SessionStart") && out.contains("login loops"),
         "{out}"
     );
+    assert!(!out.contains("gitignored"), "{out}");
+    // the cached check-ignore answer follows .gitignore both ways
+    std::fs::write(d.join(".gitignore"), ".fael/\n").unwrap();
+    let (_, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(out.contains("gitignored"), "{out}");
+    std::fs::remove_file(d.join(".gitignore")).unwrap();
+    let (_, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(!out.contains("gitignored"), "{out}");
 
     // read: claude shape in, PostToolUse context out
     let f = d.join("src/a.rs");
@@ -318,11 +326,11 @@ fn session_start_and_read_push() {
 
     // every injection is accounted, per machine
     let (ok, out, _) = fael(&d, &["stats"], "");
-    assert!(ok && out.contains("3 injections"), "{out}");
+    assert!(ok && out.contains("5 injections"), "{out}");
     let (ok, out, _) = fael(&d, &["stats", "--json"], "");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(
-        ok && v["events"] == 3 && v["by_event"]["read"]["events"] == 2,
+        ok && v["events"] == 5 && v["by_event"]["read"]["events"] == 2,
         "{out}"
     );
 }

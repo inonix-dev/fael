@@ -569,7 +569,53 @@ fn session_start(e: &Event) -> Reply {
     }
 }
 
+/// `git check-ignore` is ~8 of session-start's ~10 ms, so its answer is cached
+/// per worktree, keyed by the mtime+size of every file that can change it.
+// ponytail: stamps root and .fael .gitignore, info/exclude, the default global
+// ignore and ~/.gitconfig (a moved core.excludesFile) — edits inside a custom
+// excludesFile or a worktree's common info/exclude are missed until another
+// stamp moves; `fael doctor` always asks git.
 fn check_ignore_hit(root: &Path) -> bool {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let xdg = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home.join(".config"));
+    let stamp: String = [
+        root.join(".gitignore"),
+        root.join(".fael/.gitignore"),
+        root.join(".fael/log/.gitignore"),
+        root.join(".git/info/exclude"),
+        xdg.join("git/ignore"),
+        home.join(".gitconfig"),
+    ]
+    .iter()
+    .map(|p| match std::fs::metadata(p) {
+        Ok(m) => {
+            let t = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+            format!("{}.{},", t.map_or(0, |t| t.as_nanos()), m.len())
+        }
+        Err(_) => "-,".into(),
+    })
+    .collect();
+    let cache = state_dir()
+        .join("ignore")
+        .join(session_key(&root.to_string_lossy()));
+    if let Some(hit) = std::fs::read_to_string(&cache)
+        .ok()
+        .and_then(|s| s.strip_prefix(&stamp).map(|v| v == "1"))
+    {
+        return hit;
+    }
+    let hit = git_check_ignore(root);
+    let _ = std::fs::create_dir_all(cache.parent().unwrap_or(root));
+    let _ = std::fs::write(&cache, format!("{stamp}{}", u8::from(hit)));
+    hit
+}
+
+fn git_check_ignore(root: &Path) -> bool {
     std::process::Command::new("git")
         .args(["check-ignore", "-q", ".fael/log"])
         .current_dir(root)
