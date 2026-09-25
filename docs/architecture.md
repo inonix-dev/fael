@@ -182,4 +182,6 @@ Reading never fails: broken lines, leftover merge-conflict markers, duplicate id
 
 ## 7. Non-goals
 
-A query language, a daemon or server, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
+A query language, a daemon, embeddings, and hand-written tags or links. Links come for free from shared `files`, shared `key` and `supersedes`.
+
+The local tool never needs a daemon or a server. A hosted server (MCP over HTTP for web chat hosts) is a separate product built on `fael-core` and this same format — it is not part of this binary, and a repo's `.fael/` must always be exportable from it.
