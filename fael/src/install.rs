@@ -73,17 +73,13 @@ impl Ctx {
 
 pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), String> {
     let home = crate::home().ok_or("fael install: cannot find the home directory")?;
-    let exe = std::env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .map_err(|e| format!("fael install: where am I? {e}"))?
-        .to_string_lossy()
-        .into_owned();
-    // Windows canonicalize() gives `\\?\C:\...`, which cmd.exe can't run —
-    // drop the prefix for drive paths (`\\?\UNC\` stays as-is)
-    let exe = match exe.strip_prefix(r"\\?\") {
-        Some(p) if p.as_bytes().get(1) == Some(&b':') => p.to_string(),
-        _ => exe,
-    };
+    // Configs call bare `fael`, never current_exe(): under npx that path is a
+    // disposable cache dir, and brew/npm/cargo upgrades move it too.
+    // ponytail: bare name means PATH at hook time must find fael — so demand it now
+    if !dry && !["fael", "fael.exe", "fael.cmd"].into_iter().any(on_path) {
+        return Err("fael install: fael is not on PATH, so the hooks could not run it — install it first: npm i -g @inonix/fael, brew install inonix-dev/tap/fael or cargo install fael".into());
+    }
+    let exe = "fael".to_string();
     let c = Ctx {
         home,
         exe,
