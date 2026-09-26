@@ -101,10 +101,10 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 | `fael add <kind> "<text>" --files a,b [--key k] [--title t] [--to who] [--urgent\|--urgent-before id] [--supersedes id]` | append a row (`--title` = the ≤15-word headline lists show) |
 | `fael close <id> "<why>"` | append a close row |
 | `fael bump <id> [--to who] [--urgent\|--urgent-before id\|--not-urgent]` | new version of an open row: same text/files, new `to`/`urgent`, superseding the old one |
-| `fael find [text\|id] [--files …] [--key glob] [--kind …] [--since …] [--to who] [--all] [--full]` | query; closed and superseded rows are hidden unless `--all`; lists show titles, `<id>`/`--full` show bodies |
+| `fael find [text\|id] [--files …] [--key glob] [--kind …] [--since …] [--to who] [--all] [--full] [--limit N] [--offset M]` | query; closed and superseded rows are hidden unless `--all`; lists show titles, `<id>`/`--full` show bodies; a cut list prints the exact next call (`--offset M`) |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
 | `fael mv <old> <new>` | record a move git can't see — an anchor, an uncommitted rewrite, or one file split into several (one old path may point at many new ones). Adds matches only, never hides a row |
-| `fael kickoff [anchor]` | the session brief: urgent first, then issues, decisions, notes by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
+| `fael kickoff [anchor] [--full] [--limit N] [--offset M]` | the session brief: urgent first, then issues, decisions, notes by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
 | `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |
@@ -139,7 +139,7 @@ row_bytes = 10240             # hard cap, never above 10 KiB
 
 | Tool | Input | Notes |
 |---|---|---|
-| `find` | `files[]` `text` `key` `kind` `since` `to` `limit` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool |
+| `find` | `files[]` `text` `key` `kind` `since` `to` `limit` `offset` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool. A cut list prints `next: offset=N` — repeat the call with it |
 | `add` | `kind` `text` `files[]` (required, non-empty) `key?` `to?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
 | `close` | `id` `text` | |
 

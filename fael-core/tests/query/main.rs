@@ -2,11 +2,13 @@
 //!
 //! Thin entry only — the suites sit next to this file:
 //! `select` (find/brief/push/gone/kickoff/`to`), `render` (render/tokens),
-//! `lookup` (resolve/keys/warnings/glob), `urgent` (queue/bump/6-step rank),
-//! `title` (title/body split, `--title` fallback, `render_full`).
+//! `paging` (limit/offset page + cut line), `lookup` (resolve/keys/warnings/glob),
+//! `urgent` (queue/bump/6-step rank), `title` (title/body split, `--title` fallback,
+//! `render_full`).
 //! The shared builders live here.
 
 mod lookup;
+mod paging;
 mod render;
 mod select;
 mod title;

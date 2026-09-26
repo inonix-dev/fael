@@ -100,7 +100,7 @@ fn find_to_narrows_only_and_render_shows_to() {
     // `to` narrows only — the row still matches by file, and a `to`-only
     // filter is a real filter (query runs find, not the brief)
     assert_eq!(f(files(&["src/a.rs"])), ["16", "14"]);
-    let (rows, _) = query(
+    let (rows, _, _) = query(
         &l,
         &Filter {
             to: Some("ploy".into()),

@@ -187,6 +187,25 @@ pub fn ranked<'a>(
     keyed.into_iter().map(|(r, _, _)| r).collect()
 }
 
+/// Postgres-style paging over a ranked list: skip `offset`, take `limit`.
+/// Returns the page plus the pre-page total, so the cut line can count down
+/// from it. Applied by `query()` (find/brief) and the kickoff CLI — never by
+/// `find()`/`kickoff()` themselves, so kickoff keeps ranking the full set and
+/// push/session-start (whose filters carry no paging) are untouched.
+pub fn page(
+    rows: Vec<&Row>,
+    limit: Option<usize>,
+    offset: usize,
+) -> (Vec<&Row>, usize) {
+    let total = rows.len();
+    let page: Vec<&Row> = rows
+        .into_iter()
+        .skip(offset)
+        .take(limit.unwrap_or(usize::MAX))
+        .collect();
+    (page, total)
+}
+
 /// Rows matching `f`, ranked most actionable first. Closed and superseded
 /// rows are hidden unless `f.all`.
 pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {

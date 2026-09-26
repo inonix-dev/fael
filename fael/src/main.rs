@@ -24,10 +24,11 @@ const USAGE: &str = "usage:
   fael close <id> \"<why>\"
   fael bump <id> [--to who] [--urgent|--urgent-before id|--not-urgent]
       (same text/files, new version — text and files never change through bump)
-  fael find [text|id] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--to who] [--all] [--full]
-      (an exact id or unique prefix pulls that row's body; --full shows every body)
+  fael find [text|id] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--to who] [--all] [--full] [--limit N] [--offset M]
+      (an exact id or unique prefix pulls that row's body; --full shows every body;
+       a cut list prints the exact next call — rerun it with the new --offset)
   fael keys [glob]
-  fael kickoff [file|anchor] [--full]
+  fael kickoff [file|anchor] [--full] [--limit N] [--offset M]
   fael mv <old> <new>           record a move git can't see (anchors, uncommitted rewrites)
   fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
   fael stats                  tokens fael has put into context, per machine
@@ -116,7 +117,7 @@ impl Args {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
-                | "before" | "map" | "to" | "title" | "urgent-before" => {
+                | "before" | "map" | "to" | "title" | "urgent-before" | "limit" | "offset" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -152,6 +153,64 @@ impl Args {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect()
+    }
+
+    /// `--limit N` / `--offset M` for pull paging (chunk 5): at most N ranked
+    /// rows, skipping M first. Offset without limit pages budget cuts too.
+    pub(crate) fn paging(&self) -> Result<(Option<usize>, usize), String> {
+        let num = |f: &str| match self.one(f) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("rejected: --{f} needs a number — got {v:?}")),
+        };
+        Ok((num("limit")?, num("offset")?.unwrap_or(0)))
+    }
+
+    /// Rebuild this `find`/`kickoff` call for the cut line: the same filters,
+    /// so the agent reruns it with the new `--offset` the renderer appends.
+    /// Kickoff takes no filter flags, only `--full` and `--limit`.
+    pub(crate) fn page_base(
+        &self,
+        cmd: &str,
+        positional: Option<&str>,
+        limit: Option<usize>,
+    ) -> String {
+        let mut s = format!("fael {cmd}");
+        if let Some(p) = positional.filter(|p| !p.is_empty()) {
+            s.push_str(&format!(" {}", quoted(p)));
+        }
+        if cmd == "find" {
+            let fs = self.files();
+            if !fs.is_empty() {
+                s.push_str(&format!(" --files {}", quoted(&fs.join(","))));
+            }
+            for f in ["key", "kind", "since", "by", "to"] {
+                if let Some(v) = self.one(f) {
+                    s.push_str(&format!(" --{f} {}", quoted(&v)));
+                }
+            }
+            if self.has("all") {
+                s.push_str(" --all");
+            }
+        }
+        if self.has("full") {
+            s.push_str(" --full");
+        }
+        if let Some(n) = limit {
+            s.push_str(&format!(" --limit {n}"));
+        }
+        s
+    }
+}
+
+/// Quote only when the shell would need it — `--kind issue` stays bare.
+fn quoted(s: &str) -> String {
+    if s.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
+        format!("{s:?}")
+    } else {
+        s.to_string()
     }
 }
 

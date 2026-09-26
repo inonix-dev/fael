@@ -13,10 +13,10 @@ mod select;
 
 pub use lookup::{KeyUse, keys, query, resolve, warnings};
 pub use matching::glob;
-pub use render::{abbrev, est_tokens, render, render_full};
+pub use render::{Cut, abbrev, est_tokens, render, render_full, render_full_page, render_page};
 pub use select::{
-    Urgent, UrgentChange, brief, closed, cmp_rows, find, fresh_ts, gone, kickoff, push, ranked,
-    resolve_urgent, superseded,
+    Urgent, UrgentChange, brief, closed, cmp_rows, find, fresh_ts, gone, kickoff, page, push,
+    ranked, resolve_urgent, superseded,
 };
 
 /// What `find` narrows by. Every field is optional; `files` holds normalised refs.
@@ -37,10 +37,16 @@ pub struct Filter {
     pub to: Option<String>,
     /// show closed and superseded rows too
     pub all: bool,
+    /// Postgres-style paging, applied after ranking before render
+    /// (`page()`): at most this many rows …
+    pub limit: Option<usize>,
+    /// … skipping this many ranked rows first
+    pub offset: usize,
 }
 
 impl Filter {
     /// No narrowing at all — `find` then answers with the session brief.
+    /// Paging is not narrowing: `find --limit 2` still briefs, just shorter.
     pub fn is_empty(&self) -> bool {
         self.text.is_none()
             && self.files.is_empty()

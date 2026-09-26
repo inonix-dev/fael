@@ -16,6 +16,7 @@ pub(crate) fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
         return show_one(a, &log, row);
     }
     let files = core::normalize_files(&a.files(), &r.cwd, &r.root)?;
+    let (limit, offset) = a.paging()?;
     let f = Filter {
         text: text.cloned(),
         files: aliases::load(&r, &log, true).expand_all(&files),
@@ -25,9 +26,23 @@ pub(crate) fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
         by: a.one("by"),
         to: a.one("to").map(|t| t.trim().to_lowercase()),
         all: a.has("all"),
+        limit,
+        offset,
     };
-    let (rows, budget) = core::query(&log, &f, &r.cfg);
-    show(a, &log, &rows, budget)?;
+    let (rows, budget, total) = core::query(&log, &f, &r.cfg);
+    // the cut line reprints this call with the next offset — same flags, no guessing
+    let base = a.page_base("find", text.map(String::as_str), limit);
+    show(
+        a,
+        &log,
+        &rows,
+        budget,
+        core::Cut {
+            total,
+            offset,
+            next: &|n| format!("{base} --offset {n}"),
+        },
+    )?;
     // --all in JSON: also the close rows naming a shown row, so a consumer can tell closed from open
     if a.has("json") && f.all {
         let shown: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
@@ -44,27 +59,38 @@ pub(crate) fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
     let files = core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?;
     let log = super::read(&r);
     let al = aliases::load(&r, &log, true);
+    let (limit, offset) = a.paging()?;
     let f = Filter {
         files: al.expand_all(&files),
+        limit,
+        offset,
         ..Filter::default()
     };
+    // kickoff ranks the full set itself, so it pages after — same helper as query()
+    let (rows, total) = core::page(core::kickoff(&log, &f, &r.root, &al), limit, offset);
+    let base = a.page_base("kickoff", anchor.map(String::as_str), limit);
     show(
         a,
         &log,
-        &core::kickoff(&log, &f, &r.root, &al),
+        &rows,
         r.cfg.kickoff_tokens,
+        core::Cut {
+            total,
+            offset,
+            next: &|n| format!("{base} --offset {n}"),
+        },
     )
 }
 
-fn show(a: &Args, log: &Log, rows: &[&Row], budget: usize) -> Result<(), String> {
+fn show(a: &Args, log: &Log, rows: &[&Row], budget: usize, cut: core::Cut) -> Result<(), String> {
     if rows.is_empty() {
         eprintln!("fael: no rows match");
     } else if a.has("json") {
         rows.iter().for_each(|r| println!("{}", r.to_line()));
     } else if a.has("full") {
-        print!("{}", core::render_full(log, rows, budget));
+        print!("{}", core::render_full_page(log, rows, budget, cut));
     } else {
-        print!("{}", core::render(log, rows, budget));
+        print!("{}", core::render_page(log, rows, budget, cut));
     }
     Ok(())
 }

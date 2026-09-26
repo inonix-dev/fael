@@ -105,18 +105,24 @@ fn find(a: &Value) -> Result<String, String> {
         kind: s(a, "kind"),
         since: s(a, "since"),
         to: s(a, "to").map(|t| t.trim().to_lowercase()),
+        limit: a["limit"].as_u64().map(|n| n as usize),
+        offset: a["offset"].as_u64().unwrap_or(0) as usize,
         ..core::Filter::default()
     };
-    let (mut rows, budget) = core::query(&log, &f, &r.cfg);
-    if let Some(n) = a["limit"].as_u64() {
-        rows.truncate(n as usize);
-    }
+    // same rows as the CLI: query() pages after ranking, the cut line names
+    // the next offset to repeat the call with
+    let (rows, budget, total) = core::query(&log, &f, &r.cfg);
+    let cut = core::Cut {
+        total,
+        offset: f.offset,
+        next: &|n| format!("offset={n}"),
+    };
     Ok(if rows.is_empty() {
         "no rows match".into()
     } else if a["full"].as_bool().unwrap_or(false) {
-        core::render_full(&log, &rows, budget)
+        core::render_full_page(&log, &rows, budget, cut)
     } else {
-        core::render(&log, &rows, budget)
+        core::render_page(&log, &rows, budget, cut)
     })
 }
 
@@ -210,7 +216,8 @@ fn tools() -> Value {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "since": str_("yyyy-mm or yyyy-mm-dd"),
                 "to": str_("only rows routed to this reader, e.g. ploy"),
-                "limit": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "description": "at most this many ranked rows — a cut list prints next: offset=N, repeat the call with it"},
+                "offset": {"type": "integer", "minimum": 0, "description": "skip this many ranked rows first"},
             }},
         },
         {

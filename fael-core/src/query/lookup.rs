@@ -70,12 +70,16 @@ pub fn keys(log: &Log, pattern: Option<&str>) -> Vec<KeyUse> {
 }
 
 /// No filter = the session brief under the kickoff budget; otherwise find under the find budget.
-pub fn query<'a>(log: &'a Log, f: &Filter, cfg: &Config) -> (Vec<&'a Row>, usize) {
-    if f.is_empty() && !f.all {
+/// Either way the ranked list is paged (`Filter::limit`/`offset`) before it
+/// reaches render — the token budget stays the hard cap, whichever hits first.
+pub fn query<'a>(log: &'a Log, f: &Filter, cfg: &Config) -> (Vec<&'a Row>, usize, usize) {
+    let (rows, budget) = if f.is_empty() && !f.all {
         (super::brief(log, f), cfg.kickoff_tokens)
     } else {
         (super::find(log, f), cfg.find_tokens)
-    }
+    };
+    let (page, total) = super::page(rows, f.limit, f.offset);
+    (page, budget, total)
 }
 
 /// Warnings for a row about to be added — never a reject: a key domain the repo did not declare,
