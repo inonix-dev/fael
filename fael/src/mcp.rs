@@ -59,7 +59,9 @@ fn call(p: &Value) -> Value {
         "add" => add(args),
         "close" => close(args),
         "bump" => bump(args),
-        n => Err(format!("unknown tool {n} — fael has find, add, close, bump")),
+        n => Err(format!(
+            "unknown tool {n} — fael has find, add, close, bump"
+        )),
     };
     let (text, is_error) = match res {
         Ok(t) => (t, false),

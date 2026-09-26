@@ -46,10 +46,7 @@ pub fn render(log: &Log, rows: &[&Row], budget: usize) -> String {
         };
         let key = r.key.as_ref().map(|k| format!(" #{k}")).unwrap_or_default();
         // `(urgent 1, to: ploy)` — whichever of the two is set, urgent first
-        let route = match (
-            r.urgent_value().map(|u| format!("urgent {u}")),
-            r.to_who(),
-        ) {
+        let route = match (r.urgent_value().map(|u| format!("urgent {u}")), r.to_who()) {
             (Some(u), Some(t)) => format!(" ({u}, to: {t})"),
             (Some(u), None) => format!(" ({u})"),
             (None, Some(t)) => format!(" (to: {t})"),

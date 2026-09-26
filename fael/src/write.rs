@@ -75,11 +75,7 @@ pub(crate) fn bump(
     a: &crate::Args,
     id: &str,
 ) -> Result<(core::Row, PathBuf, Vec<String>), String> {
-    let urgent = match (
-        a.has("urgent"),
-        a.one("urgent-before"),
-        a.has("not-urgent"),
-    ) {
+    let urgent = match (a.has("urgent"), a.one("urgent-before"), a.has("not-urgent")) {
         (false, None, false) => core::UrgentChange::Keep,
         (true, None, false) => core::UrgentChange::End,
         (false, Some(t), false) => core::UrgentChange::Before(t),

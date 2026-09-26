@@ -11,10 +11,7 @@ fn find_hides_closed_and_superseded_ranked() {
         all: true,
         ..Filter::default()
     };
-    assert_eq!(
-        ids(&find(&l, &all)),
-        ["13", "10", "14", "11", "15", "12"]
-    );
+    assert_eq!(ids(&find(&l, &all)), ["13", "10", "14", "11", "15", "12"]);
 }
 
 #[test]

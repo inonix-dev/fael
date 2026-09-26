@@ -10,7 +10,9 @@ fn render_cuts_at_budget_but_shows_one_row() {
     let out = render(&l, &rows, 1);
     assert_eq!(out.lines().count(), 2, "{out}");
     // ranked first is the open issue 13 (urgent, to, kind all beat newest-id)
-    assert!(out.starts_with("- [A0000000000000000000000013] issue text of A0000000000000000000000013 → .\\src\\c.rs\n"));
+    assert!(out.starts_with(
+        "- [A0000000000000000000000013] issue text of A0000000000000000000000013 → .\\src\\c.rs\n"
+    ));
     assert!(out.ends_with("… +3 more over the 1-token budget — narrow the filter\n"));
     let all = Filter {
         all: true,

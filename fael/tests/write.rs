@@ -339,10 +339,7 @@ fn urgent_and_bump_round_trip() {
         assert!(ok, "{err}");
     }
     assert_eq!(row_json(&d, "first hot")["urgent"].as_f64(), Some(1.0));
-    assert_eq!(
-        row_json(&d, "second hot")["urgent"].as_f64(),
-        Some(2.0)
-    );
+    assert_eq!(row_json(&d, "second hot")["urgent"].as_f64(), Some(2.0));
     // --urgent on a decision is rejected: the queue holds issues
     let (ok, _, err) = fael(
         &d,
@@ -370,7 +367,10 @@ fn urgent_and_bump_round_trip() {
     // the queue order follows the new number, rendered on the line
     let (_, out, _) = fael(&d, &["find", "--kind", "issue"], "");
     assert!(out.contains("second hot (urgent 0.5)"), "{out}");
-    assert!(out.find("second hot").unwrap() < out.find("first hot").unwrap(), "{out}");
+    assert!(
+        out.find("second hot").unwrap() < out.find("first hot").unwrap(),
+        "{out}"
+    );
     // --not-urgent leaves the queue, --to routes (lowercased)
     let (ok, _, err) = fael(&d, &["bump", &id_b2, "--not-urgent", "--to", "Ploy"], "");
     assert!(ok, "{err}");
