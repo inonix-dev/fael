@@ -166,58 +166,6 @@ fn add_find_close_round_trip() {
 }
 
 #[test]
-fn add_title_lists_show_body_by_id() {
-    let d = repo();
-    let body = "the refund job double-charges when the queue retries a timed-out worker";
-    let (ok, out, err) = fael(
-        &d,
-        &[
-            "add",
-            "issue",
-            body,
-            "--files",
-            "src/a.rs",
-            "--title",
-            "refund job double-charges",
-        ],
-    );
-    assert!(ok, "{err}");
-    let id = out.split_whitespace().next().unwrap().to_string();
-    let (_, out, _) = fael(&d, &["find", "--json", "--files", "src/a.rs"]);
-    assert!(
-        out.contains("\"title\":\"refund job double-charges\""),
-        "{out}"
-    );
-    // lists show the title, never the body
-    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs"]);
-    assert!(
-        out.contains("refund job double-charges → src/a.rs"),
-        "{out}"
-    );
-    assert!(!out.contains("timed-out worker"), "{out}");
-    // text search finds titles too
-    let (_, out, _) = fael(&d, &["find", "double-charges"]);
-    assert!(out.contains("refund job double-charges"), "{out}");
-    // the body comes back by id, or with --full
-    let (_, out, _) = fael(&d, &["find", &id[..12]]);
-    assert!(
-        out.contains("refund job double-charges") && out.contains("timed-out worker"),
-        "{out}"
-    );
-    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--full"]);
-    assert!(out.contains("timed-out worker"), "{out}");
-    // no title: a 25-word row lists its first 20 words + …
-    let long = (1..=25)
-        .map(|i| format!("w{i}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let (ok, _, err) = fael(&d, &["add", "note", &long, "--files", "src/a.rs"]);
-    assert!(ok, "{err}");
-    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--kind", "note"]);
-    assert!(out.contains("w20 …") && !out.contains("w21"), "{out}");
-}
-
-#[test]
 fn config_kinds_and_bad_config() {
     let d = repo();
     std::fs::create_dir_all(d.join(".fael")).unwrap();

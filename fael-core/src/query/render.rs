@@ -118,9 +118,7 @@ fn render_inner(log: &Log, rows: &[&Row], budget: usize, full: bool, cut: Option
         out.push_str(&line);
     }
     // a `--limit` page ends before the matches do — same line shape, no budget involved
-    if !cut_budget
-        && let Some(c) = &cut
-    {
+    if !cut_budget && let Some(c) = &cut {
         let rest = c.total.saturating_sub(c.offset + rows.len());
         if rest > 0 {
             out.push_str(&cut_line(rest, (c.next)(c.offset + rows.len())));

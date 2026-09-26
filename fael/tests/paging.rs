@@ -1,6 +1,6 @@
-//! Paging in the real binary: `--limit/--offset` page after ranking, the cut
-//! line prints the exact next call, and MCP `find` returns the same rows.
-//! (Lives here, not cli.rs — that file is already over the 400-line limit.)
+//! Lists in the real binary: titles headline a row and the body is pulled by id;
+//! `--limit/--offset` page after ranking, the cut line prints the exact next
+//! call, and MCP `find` returns the same rows. (Split from cli.rs — 400-line cap.)
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,14 +53,20 @@ fn find_pages_and_names_the_next_call() {
     // newest first: gamma, beta — plus the exact next call
     let (ok, out, err) = fael(&d, &["find", "--kind", "issue", "--limit", "2"]);
     assert!(ok, "{err}");
-    assert!(out.contains("paging gamma") && out.contains("paging beta"), "{out}");
+    assert!(
+        out.contains("paging gamma") && out.contains("paging beta"),
+        "{out}"
+    );
     assert!(!out.contains("paging alpha"), "{out}");
     assert!(
         out.ends_with("… +1 more — next: fael find --kind issue --limit 2 --offset 2\n"),
         "{out}"
     );
     // rerunning that line returns the rest, with no cut line left
-    let (ok, out, err) = fael(&d, &["find", "--kind", "issue", "--limit", "2", "--offset", "2"]);
+    let (ok, out, err) = fael(
+        &d,
+        &["find", "--kind", "issue", "--limit", "2", "--offset", "2"],
+    );
     assert!(ok, "{err}");
     assert!(out.contains("paging alpha"), "{out}");
     assert!(!out.contains("more — next:"), "{out}");
@@ -69,9 +75,17 @@ fn find_pages_and_names_the_next_call() {
     assert!(ok, "{err}");
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("no rows match"), "{err}");
+    // a glob in the rebuilt call is single-quoted — bare, the shell would expand it
+    let (_, out, _) = fael(&d, &["find", "--files", "src/*", "--limit", "1"]);
+    assert!(
+        out.contains("next: fael find --files 'src/*' --limit 1 --offset 1"),
+        "{out}"
+    );
     // not a number: rejected, not silently ignored
     let (ok, _, err) = fael(&d, &["find", "--limit", "x"]);
     assert!(!ok && err.contains("--limit needs a number"), "{err}");
+    let (ok, _, err) = fael(&d, &["find", "--limit", "0"]);
+    assert!(!ok && err.contains("--limit 0 shows nothing"), "{err}");
 }
 
 #[test]
@@ -85,7 +99,10 @@ fn kickoff_pages_too() {
     let (ok, out, err) = fael(&d, &["kickoff", "--limit", "2"]);
     assert!(ok, "{err}");
     assert_eq!(out.lines().count(), 3, "{out}");
-    assert!(out.ends_with("… +1 more — next: fael kickoff --limit 2 --offset 2\n"), "{out}");
+    assert!(
+        out.ends_with("… +1 more — next: fael kickoff --limit 2 --offset 2\n"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -119,10 +136,65 @@ fn mcp_find_pages_like_the_cli() {
         .collect();
     assert_eq!(r.len(), 2, "{out}");
     let p1 = r[0]["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(p1.contains("paging gamma") && p1.contains("paging beta"), "{p1}");
+    assert!(
+        p1.contains("paging gamma") && p1.contains("paging beta"),
+        "{p1}"
+    );
     assert!(!p1.contains("paging alpha"), "{p1}");
     assert!(p1.ends_with("… +1 more — next: offset=2\n"), "{p1}");
     let p2 = r[1]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(p2.contains("paging alpha"), "{p2}");
     assert!(!p2.contains("more — next:"), "{p2}");
+}
+
+#[test]
+fn add_title_lists_show_body_by_id() {
+    let d = repo();
+    let body = "the refund job double-charges when the queue retries a timed-out worker";
+    let (ok, out, err) = fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            body,
+            "--files",
+            "src/a.rs",
+            "--title",
+            "refund job double-charges",
+        ],
+    );
+    assert!(ok, "{err}");
+    let id = out.split_whitespace().next().unwrap().to_string();
+    let (_, out, _) = fael(&d, &["find", "--json", "--files", "src/a.rs"]);
+    assert!(
+        out.contains("\"title\":\"refund job double-charges\""),
+        "{out}"
+    );
+    // lists show the title, never the body
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs"]);
+    assert!(
+        out.contains("refund job double-charges → src/a.rs"),
+        "{out}"
+    );
+    assert!(!out.contains("timed-out worker"), "{out}");
+    // text search finds titles too
+    let (_, out, _) = fael(&d, &["find", "double-charges"]);
+    assert!(out.contains("refund job double-charges"), "{out}");
+    // the body comes back by id, or with --full
+    let (_, out, _) = fael(&d, &["find", &id[..12]]);
+    assert!(
+        out.contains("refund job double-charges") && out.contains("timed-out worker"),
+        "{out}"
+    );
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--full"]);
+    assert!(out.contains("timed-out worker"), "{out}");
+    // no title: a 25-word row lists its first 20 words + …
+    let long = (1..=25)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (ok, _, err) = fael(&d, &["add", "note", &long, "--files", "src/a.rs"]);
+    assert!(ok, "{err}");
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--kind", "note"]);
+    assert!(out.contains("w20 …") && !out.contains("w21"), "{out}");
 }

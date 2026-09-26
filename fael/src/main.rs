@@ -165,7 +165,11 @@ impl Args {
                 .map(Some)
                 .map_err(|_| format!("rejected: --{f} needs a number — got {v:?}")),
         };
-        Ok((num("limit")?, num("offset")?.unwrap_or(0)))
+        let limit = num("limit")?;
+        if limit == Some(0) {
+            return Err("rejected: --limit 0 shows nothing — drop it or give 1 or more".into());
+        }
+        Ok((limit, num("offset")?.unwrap_or(0)))
     }
 
     /// Rebuild this `find`/`kickoff` call for the cut line: the same filters,
@@ -205,12 +209,15 @@ impl Args {
     }
 }
 
-/// Quote only when the shell would need it — `--kind issue` stays bare.
+/// Quote only when the shell would need it — `--kind issue` stays bare, a
+/// glob (`--key auth:*`) or `$x` is single-quoted so the shell passes it as-is.
 fn quoted(s: &str) -> String {
-    if s.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
-        format!("{s:?}")
-    } else {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || "-_./:,@+=".contains(c))
+    {
         s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
     }
 }
 

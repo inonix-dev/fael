@@ -105,7 +105,12 @@ fn find(a: &Value) -> Result<String, String> {
         kind: s(a, "kind"),
         since: s(a, "since"),
         to: s(a, "to").map(|t| t.trim().to_lowercase()),
-        limit: a["limit"].as_u64().map(|n| n as usize),
+        limit: match a["limit"].as_u64() {
+            Some(0) => {
+                return Err("rejected: limit 0 shows nothing — drop it or give 1 or more".into());
+            }
+            n => n.map(|n| n as usize),
+        },
         offset: a["offset"].as_u64().unwrap_or(0) as usize,
         ..core::Filter::default()
     };

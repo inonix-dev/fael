@@ -98,7 +98,10 @@ fn render_page_budget_cut_offsets_by_shown() {
         },
     );
     // one row shown under budget 1, three left, the offset follows the shown rows
-    assert!(out.ends_with("… +3 more — next: fael find --offset 1\n"), "{out}");
+    assert!(
+        out.ends_with("… +3 more — next: fael find --offset 1\n"),
+        "{out}"
+    );
 }
 
 fn ids(rows: &[&Row]) -> Vec<String> {

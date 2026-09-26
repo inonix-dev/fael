@@ -192,11 +192,7 @@ pub fn ranked<'a>(
 /// from it. Applied by `query()` (find/brief) and the kickoff CLI — never by
 /// `find()`/`kickoff()` themselves, so kickoff keeps ranking the full set and
 /// push/session-start (whose filters carry no paging) are untouched.
-pub fn page(
-    rows: Vec<&Row>,
-    limit: Option<usize>,
-    offset: usize,
-) -> (Vec<&Row>, usize) {
+pub fn page(rows: Vec<&Row>, limit: Option<usize>, offset: usize) -> (Vec<&Row>, usize) {
     let total = rows.len();
     let page: Vec<&Row> = rows
         .into_iter()
