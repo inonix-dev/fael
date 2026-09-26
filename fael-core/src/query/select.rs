@@ -86,13 +86,19 @@ pub fn resolve_urgent(log: &Log, opt: &Urgent) -> Result<Option<f64>, String> {
             let tu = t.urgent_value().ok_or_else(|| {
                 format!("rejected: --urgent-before needs an urgent row — {id:?} has no number")
             })?;
-            let pos = q
+            let pos = q.iter().position(|(_, r)| r.id == t.id).ok_or_else(|| {
+                format!(
+                    "rejected: --urgent-before needs an open row — {id:?} is closed or superseded"
+                )
+            })?;
+            // the nearest number strictly above — a tie with the row above has
+            // no gap, so skip past it rather than falling to `tu - 1.0`
+            let above = q[..pos]
                 .iter()
-                .position(|(_, r)| r.id == t.id)
-                .ok_or_else(|| {
-                    format!("rejected: --urgent-before needs an open row — {id:?} is closed or superseded")
-                })?;
-            let above = if pos == 0 { 0.0 } else { q[pos - 1].0 };
+                .rev()
+                .map(|(u, _)| *u)
+                .find(|u| *u < tu)
+                .unwrap_or(0.0);
             // the queue starts at 1, so halving the top never crosses zero; a
             // hand-written non-positive top falls back to one step above it
             Ok(Some(if above < tu {

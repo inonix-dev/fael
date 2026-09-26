@@ -58,8 +58,9 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         .take(c.repo.cfg.session_decisions)
         .collect()
     };
-    let mut body = core::render(&c.log, &t.listed, c.repo.cfg.kickoff_tokens);
-    body.push_str(&core::render(&c.log, &decisions, c.repo.cfg.kickoff_tokens));
+    // one render, one budget: to-do first, then decisions, a single cut line
+    let shown: Vec<&core::Row> = t.listed.iter().chain(decisions.iter()).copied().collect();
+    let mut body = core::render(&c.log, &shown, c.repo.cfg.kickoff_tokens);
     if let Some(line) = count_line(&t) {
         body.push_str(&line);
     }

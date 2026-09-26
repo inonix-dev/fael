@@ -30,10 +30,7 @@ fn queue() -> Log {
 #[test]
 fn urgent_end_is_max_plus_one() {
     let empty = Log::default();
-    assert_eq!(
-        resolve_urgent(&empty, &Urgent::End).unwrap(),
-        Some(1.0)
-    );
+    assert_eq!(resolve_urgent(&empty, &Urgent::End).unwrap(), Some(1.0));
     let l = queue();
     assert_eq!(resolve_urgent(&l, &Urgent::End).unwrap(), Some(3.0));
     assert_eq!(resolve_urgent(&l, &Urgent::Unset).unwrap(), None);
@@ -54,6 +51,58 @@ fn urgent_before_is_the_midpoint_above() {
 }
 
 #[test]
+fn urgent_before_a_tie_skips_to_the_next_smaller_number() {
+    // X=1, then Z=2 and Y=2 tied (two writers filed --urgent at once)
+    let l = Log {
+        rows: vec![
+            issue("U0000000000000000000000001", Some(1.0)),
+            issue("U0000000000000000000000002", Some(2.0)),
+            issue("U0000000000000000000000003", Some(2.0)),
+        ],
+        ..Log::default()
+    };
+    // before Y (lower id, sorts after Z): midpoint with X, not 2 - 1 = 1
+    assert_eq!(
+        resolve_urgent(&l, &Urgent::Before("U0000000000000000000000002".into())).unwrap(),
+        Some(1.5)
+    );
+}
+
+#[test]
+fn close_on_a_bumped_id_points_at_the_newest_version() {
+    let dir = std::env::temp_dir().join(format!("fael-close-bumped-{}", ulid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cfg, st) = (
+        Config::default(),
+        Stamp {
+            by: "tester-0000".into(),
+            branch: None,
+            sha: None,
+        },
+    );
+    let mut r = Row::new("tester-0000", "issue", "hot", vec!["src/a.rs".into()]);
+    r.urgent = Some(1.0);
+    let r = add_row(&dir, &read(&dir), &cfg, &st, r, None).unwrap().0;
+    let (b, _, _) = bump_row(
+        &dir,
+        &read(&dir),
+        &cfg,
+        &st,
+        &r.id,
+        None,
+        UrgentChange::Keep,
+    )
+    .unwrap();
+    assert_eq!(b.urgent, Some(1.0));
+    // closing the pre-bump id would leave the live version open
+    let e = close_row(&dir, &read(&dir), &cfg, &st, &r.id, "done").unwrap_err();
+    assert!(
+        e.contains(&format!("close the newest version {}", b.id)),
+        "{e}"
+    );
+}
+
+#[test]
 fn urgent_before_rejects_non_queue_rows() {
     let mut l = queue();
     l.rows.push(issue("U0000000000000000000000003", None));
@@ -61,11 +110,8 @@ fn urgent_before_rejects_non_queue_rows() {
     assert!(e.contains("has no number"), "{e}");
     let e = resolve_urgent(&l, &Urgent::Before("U0000000000000000000000009".into())).unwrap_err();
     assert!(e.contains("no row"), "{e}");
-    l.closes.push(Row::close(
-        "t-0000",
-        "U0000000000000000000000002",
-        "done",
-    ));
+    l.closes
+        .push(Row::close("t-0000", "U0000000000000000000000002", "done"));
     let e = resolve_urgent(&l, &Urgent::Before("U0000000000000000000000002".into())).unwrap_err();
     assert!(e.contains("closed or superseded"), "{e}");
 }
@@ -116,8 +162,16 @@ fn bump_rewrites_only_the_moved_row() {
         .unwrap();
     assert_eq!(a_still.urgent_value(), Some(1.0));
     // leaving the queue keeps the routing
-    let (b3, _, _) = bump_row(&dir, &read(&dir), &cfg, &st, &b2.id, None, UrgentChange::Remove)
-        .unwrap();
+    let (b3, _, _) = bump_row(
+        &dir,
+        &read(&dir),
+        &cfg,
+        &st,
+        &b2.id,
+        None,
+        UrgentChange::Remove,
+    )
+    .unwrap();
     assert!(b3.urgent.is_none());
     assert_eq!(b3.to.as_deref(), Some("ploy"));
 }
@@ -150,7 +204,16 @@ fn bump_rejects_hidden_rows_and_non_issue_urgent() {
     .unwrap();
     assert_eq!(gone.to.as_deref(), Some("ploy"));
     // the old version is superseded — bump the newer one instead
-    let e = bump_row(&dir, &read(&dir), &cfg, &st, &d.id, None, UrgentChange::Keep).unwrap_err();
+    let e = bump_row(
+        &dir,
+        &read(&dir),
+        &cfg,
+        &st,
+        &d.id,
+        None,
+        UrgentChange::Keep,
+    )
+    .unwrap_err();
     assert!(e.contains("already superseded"), "{e}");
     close_row(&dir, &read(&dir), &cfg, &st, &gone.id, "done").unwrap();
     let e = bump_row(

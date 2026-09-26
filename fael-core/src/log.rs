@@ -223,7 +223,10 @@ pub fn bump_row(
 ) -> Result<(Row, PathBuf, Vec<String>), String> {
     let old = resolve(log, id)?.clone();
     if closed(log).contains(old.id.as_str()) {
-        return Err(format!("rejected: {} is already closed — bump an open row", old.id));
+        return Err(format!(
+            "rejected: {} is already closed — bump an open row",
+            old.id
+        ));
     }
     if superseded(log).contains(old.id.as_str()) {
         return Err(format!(
@@ -264,6 +267,22 @@ pub fn close_row(
     // a second close row adds nothing but noise to an append-only log
     if closed(log).contains(target.id.as_str()) {
         return Err(format!("rejected: {} is already closed", target.id));
+    }
+    // bump makes id churn routine: closing the hidden old version would leave
+    // the live one open, so point at the newest version instead
+    if superseded(log).contains(target.id.as_str()) {
+        let mut newest = target.id.as_str();
+        while let Some(n) = log
+            .rows
+            .iter()
+            .find(|r| r.supersedes.as_deref() == Some(newest))
+        {
+            newest = &n.id;
+        }
+        return Err(format!(
+            "rejected: {} is superseded — close the newest version {newest}",
+            target.id
+        ));
     }
     let warns = vec![];
     let mut row = Row::close(&stamp.by, &target.id, why);
