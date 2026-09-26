@@ -127,6 +127,7 @@ resolve = true                # follow renames (git log -M + fael mv rows); fals
 kickoff_tokens = 800          # kickoff, and find with no filter
 find_tokens = 800
 push_tokens = 800             # read/edit hook push
+session_decisions = 0         # session-start lists this many freshest open decisions above the count line
 [warn]
 row_tokens = 400
 [limit]

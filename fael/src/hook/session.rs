@@ -27,15 +27,47 @@ pub(crate) fn session_start(e: &Event) -> Reply {
     // the read/edit push (which never spawns git) resolves them — and kickoff
     // keeps rows whose files were merely renamed
     let al = aliases::load(&c.repo, &c.log, true);
-    let rows = core::kickoff(&c.log, &Filter::default(), &c.repo.root, &al);
+    // PLAN-fael-direction chunk 1: session start carries no row dump. Every
+    // open issue still pushes the moment its file is touched; the pull
+    // (`fael find --kind issue`) already exists. Opt-in context: the N
+    // freshest open decisions (`budget.session_decisions`, default 0).
+    let open_issues = core::find(
+        &c.log,
+        &Filter {
+            kind: Some("issue".into()),
+            ..Filter::default()
+        },
+    )
+    .len();
+    let decisions: Vec<_> = if c.repo.cfg.session_decisions == 0 {
+        vec![]
+    } else {
+        core::kickoff(
+            &c.log,
+            &Filter {
+                kind: Some("decision".into()),
+                ..Filter::default()
+            },
+            &c.repo.root,
+            &al,
+        )
+        .into_iter()
+        .take(c.repo.cfg.session_decisions)
+        .collect()
+    };
+    let mut body = core::render(&c.log, &decisions, c.repo.cfg.kickoff_tokens);
+    if open_issues > 0 {
+        body.push_str(&format!(
+            "fael: {} open {} — fael find --kind issue (MCP find kind=issue); each also pushes when you touch its file\n",
+            open_issues,
+            if open_issues == 1 { "issue" } else { "issues" },
+        ));
+    }
     let adopted = c.repo.fael.join("log").is_dir();
-    let mut context = match (rows.is_empty(), adopted) {
+    let mut context = match (body.is_empty(), adopted) {
         (true, false) => None,
         (true, true) => Some(format!("{ISSUE_LINE}\n")),
-        (false, _) => Some(format!(
-            "{}{ISSUE_LINE}\n",
-            core::render(&c.log, &rows, c.repo.cfg.kickoff_tokens)
-        )),
+        (false, _) => Some(format!("{body}{ISSUE_LINE}\n")),
     };
     // SPEC §11: the cheap check — one line, only when there is a problem.
     // Skipped while no log exists yet: warning about an empty missing log is
@@ -53,7 +85,7 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         "session-start",
         &c.repo.root,
         &context,
-        &rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        &decisions.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
     );
     Reply {
         block: false,

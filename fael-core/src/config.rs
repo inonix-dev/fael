@@ -16,6 +16,9 @@ pub struct Config {
     pub find_tokens: usize,
     /// Token budget for the read/edit hook push.
     pub push_tokens: usize,
+    /// How many of the freshest open decisions session-start lists above the
+    /// count line (PLAN-fael-direction chunk 1). 0 = count line only.
+    pub session_decisions: usize,
     /// Warn when a row's text is estimated over this many tokens.
     pub warn_row_tokens: usize,
     /// Resolve renamed paths through the L2 alias set (`git log -M` + `fael mv`
@@ -32,6 +35,7 @@ impl Default for Config {
             kickoff_tokens: 800,
             find_tokens: 800,
             push_tokens: 800,
+            session_decisions: 0,
             warn_row_tokens: 400,
             resolve: true,
         }
@@ -58,6 +62,7 @@ impl Config {
             kickoff_tokens: Option<usize>,
             find_tokens: Option<usize>,
             push_tokens: Option<usize>,
+            session_decisions: Option<usize>,
         }
         #[derive(Deserialize, Default)]
         #[serde(default)]
@@ -78,6 +83,7 @@ impl Config {
             kickoff_tokens: f.budget.kickoff_tokens.unwrap_or(d.kickoff_tokens),
             find_tokens: f.budget.find_tokens.unwrap_or(d.find_tokens),
             push_tokens: f.budget.push_tokens.unwrap_or(d.push_tokens),
+            session_decisions: f.budget.session_decisions.unwrap_or(d.session_decisions),
             warn_row_tokens: f.warn.row_tokens.unwrap_or(d.warn_row_tokens),
             resolve: f.resolve.unwrap_or(d.resolve),
         })

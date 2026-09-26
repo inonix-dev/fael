@@ -24,10 +24,15 @@ fn session_start_and_read_push() {
     assert!(ok, "{err}");
     let input = format!(r#"{{"cwd":{}}}"#, json(&d));
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    // chunk 1: no row dump — one count line, the issue pushes on file touch
     assert!(
-        ok && out.contains("SessionStart") && out.contains("login loops"),
+        ok && out.contains("SessionStart") && out.contains("1 open issue — fael find --kind issue"),
         "{out}"
     );
+    assert!(!out.contains("login loops"), "{out}");
+    // the explicit-arg path keeps today's kickoff: the row is still there
+    let (ok, out, _) = fael(&d, &["kickoff", "src/a.rs"], "");
+    assert!(ok && out.contains("login loops"), "{out}");
     assert!(!out.contains("gitignored"), "{out}");
     // the cached check-ignore answer follows .gitignore both ways
     std::fs::write(d.join(".gitignore"), ".fael/\n").unwrap();
@@ -85,4 +90,29 @@ fn session_start_and_read_push() {
         ok && v["events"] == 7 && v["by_event"]["read"]["events"] == 3,
         "{out}"
     );
+}
+
+#[test]
+fn session_start_decisions_opt_in() {
+    let d = repo();
+    std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
+    let input = format!(r#"{{"cwd":{}}}"#, json(&d));
+    // zero open issues + default config = no count line, only the report line
+    let (ok, _, err) = fael(&d, &["add", "decision", "use kickoff order", "--files", "src/a.rs"], "");
+    assert!(ok, "{err}");
+    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(ok && !out.contains("open issue"), "{out}");
+    assert!(!out.contains("use kickoff order"), "{out}");
+    // opt in: the freshest decision lists above the count line
+    std::fs::write(d.join(".fael/config.toml"), "[budget]\nsession_decisions = 1\n").unwrap();
+    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(ok && out.contains("use kickoff order"), "{out}");
+    assert!(!out.contains("open issue"), "{out}");
+    // an open issue adds the count line below the decision
+    let (ok, _, err) = fael(&d, &["add", "issue", "login loops", "--files", "src/a.rs"], "");
+    assert!(ok, "{err}");
+    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(ok && out.contains("use kickoff order"), "{out}");
+    assert!(out.contains("1 open issue — fael find --kind issue"), "{out}");
+    assert!(!out.contains("login loops"), "{out}");
 }
