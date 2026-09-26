@@ -1,5 +1,5 @@
 use super::Filter;
-use super::matching::{file_match, glob, lenient, same_dir, zone};
+use super::matching::{file_match, glob, is_md, lenient, same_dir, zone};
 use crate::{Aliases, Log, Row, anchor, is_alias_row, resolve, to_matches};
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -226,7 +226,11 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
                 && f.by.as_ref().is_none_or(|b| &r.by == b)
                 && f.to
                     .as_ref()
-                    .is_none_or(|t| r.to_who().is_some_and(|w| w == t))
+                    // either side may be a full writer id or its name part
+                    .is_none_or(|t| {
+                        r.to_who()
+                            .is_some_and(|w| to_matches(w, t) || to_matches(t, w))
+                    })
                 && f.since.as_ref().is_none_or(|s| r.ts.as_str() >= s.as_str())
                 && f.key
                     .as_ref()
@@ -272,9 +276,10 @@ pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
 fn plan_anchor(file: &str) -> Option<String> {
     let base = file.rsplit('/').next().unwrap_or(file);
     let stem = base.strip_prefix("PLAN-")?;
-    if stem.len() <= 3 || !stem[stem.len() - 3..].eq_ignore_ascii_case(".md") {
+    if !is_md(stem) {
         return None;
     }
+    // `.md` is ASCII, so `len - 3` is a char boundary here
     let name = &stem[..stem.len() - 3];
     if name.is_empty() {
         return None;

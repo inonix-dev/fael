@@ -22,9 +22,12 @@ pub(super) fn same_dir(q: &str, f: &str) -> bool {
     dir(q) == dir(f)
 }
 
-/// Markdown by extension, case-insensitive (`README.MD` counts).
-fn is_md(s: &str) -> bool {
-    s.len() >= 3 && s[s.len() - 3..].eq_ignore_ascii_case(".md")
+/// Markdown by extension, case-insensitive (`README.MD` counts). Compares
+/// bytes: a `str` slice at `len - 3` panics inside a multi-byte char.
+pub(super) fn is_md(s: &str) -> bool {
+    s.as_bytes()
+        .get(s.len().saturating_sub(3)..)
+        .is_some_and(|e| e.eq_ignore_ascii_case(b".md"))
 }
 
 /// Readers accept legacy spellings: `\` separators and a leading `./`.

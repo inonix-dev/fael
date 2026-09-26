@@ -114,6 +114,21 @@ fn find_to_narrows_only_and_render_shows_to() {
         out.contains("text of C0000000000000000000000016 (to: ploy) → src/a.rs"),
         "{out}"
     );
+    // a full writer id and its name part match either way round
+    let mut r = row("C0000000000000000000000017", "issue", &["src/a.rs"], None);
+    r.to = Some("delamind-d88f".into());
+    l.rows.push(r);
+    let to = |t: &str| {
+        ids(&find(
+            &l,
+            &Filter {
+                to: Some(t.into()),
+                ..Filter::default()
+            },
+        ))
+    };
+    assert_eq!(to("delamind"), ["17"]);
+    assert_eq!(to("ploy-a1b2"), ["16"]);
     // rows without `to` render exactly as before (no empty suffix)
     let out = render(&l, &find(&l, &Filter::default()), 10_000);
     assert!(!out.contains("(to:)"), "{out}");
@@ -175,6 +190,8 @@ fn push_ignores_same_dir_for_markdown() {
     assert_eq!(q(&[".fapony/plan/PLAN-a.md"]), ["16"]);
     // code keeps its same-dir tier
     assert_eq!(q(&["src/a.rs"]), ["14", "13"]);
+    // a tail that ends mid multi-byte char is not markdown, and no panic
+    assert!(q(&["docs/บันทึก1"]).is_empty());
 }
 
 #[test]
@@ -200,10 +217,9 @@ fn kickoff_matches_plan_anchor() {
         files: vec![".fapony/plan/PLAN-foo.md".into()],
         ..Filter::default()
     };
-    assert_eq!(
-        ids(&kickoff(&l, &f, &r, &Aliases::default())),
-        ["10"]
-    );
+    assert_eq!(ids(&kickoff(&l, &f, &r, &Aliases::default())), ["10"]);
+    // a PLAN- name ending mid multi-byte char widens to nothing, no panic
+    assert!(kickoff(&l, &files(&["PLAN-แผน1"]), &r, &Aliases::default()).is_empty());
     // a non-plan query never matches the anchor
     assert!(kickoff(&l, &files(&["src/a.rs"]), &r, &Aliases::default()).is_empty());
 }
