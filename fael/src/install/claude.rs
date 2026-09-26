@@ -20,11 +20,40 @@ pub(crate) fn claude_mcp(c: &Ctx) {
                     + &String::from_utf8_lossy(&o.stderr)
             })
     };
+    // the path after `Command:` in `claude mcp get` — a fael binary there is ours to repoint
+    let points_at_fael = |out: &str| {
+        out.lines()
+            .find_map(|l| l.trim().strip_prefix("Command:"))
+            .is_some_and(|v| v.contains("fael"))
+    };
+    let remove = "claude mcp remove fael -s user";
     match get("fael") {
         Some(out) if out.contains(&c.exe) => println!("  mcp fael already set"),
-        Some(_) => println!(
-            "  ! an MCP server named fael points elsewhere — left alone; `claude mcp remove fael -s user` and rerun"
+        Some(out) if !points_at_fael(&out) => println!(
+            "  ! an MCP server named fael points elsewhere — left alone; `{remove}` and rerun"
         ),
+        Some(_) if c.dry => println!("  would run: {remove} && {add}"),
+        Some(_) => {
+            let ok = [
+                &["mcp", "remove", "fael", "-s", "user"][..],
+                &["mcp", "add", "fael", "-s", "user", "--", &c.exe, "mcp"],
+            ]
+            .iter()
+            .all(|a| {
+                Command::new("claude")
+                    .args(*a)
+                    .status()
+                    .is_ok_and(|s| s.success())
+            });
+            println!(
+                "  {}",
+                if ok {
+                    format!("ran: {remove} && {add} (repointed)")
+                } else {
+                    format!("! failed: {remove} && {add}")
+                }
+            );
+        }
         None if c.dry => println!("  would run: {add}"),
         None => {
             let ok = Command::new("claude")
