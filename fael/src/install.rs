@@ -83,7 +83,7 @@ pub fn cmd(client: Option<String>, dry: bool, replace: bool) -> Result<(), Strin
     let exe = match hook_exe() {
         Some(e) => e,
         None if dry => "fael".into(),
-        None => return Err("fael install: fael is not on PATH, so the hooks could not run it — install it first: brew install inonix-dev/tap/fael, npm i -g @inonix/fael or cargo install fael".into()),
+        None => return Err("fael install: fael is not on PATH, so the hooks could not run it — install it first: brew install zecalis/tap/fael, npm i -g @zecalis/fael or cargo install fael".into()),
     };
     let c = Ctx {
         home,
@@ -171,7 +171,7 @@ fn hook_exe() -> Option<String> {
         // Windows npm: shims sit in <prefix>/, packages in <prefix>/node_modules/
         .or_else(|| {
             hit.parent()
-                .and_then(|d| real(&d.join("node_modules/@inonix/fael")))
+                .and_then(|d| real(&d.join("node_modules/@zecalis/fael")))
         });
     Some(wrapped.map_or("fael".into(), |p| p.to_string_lossy().into_owned()))
 }

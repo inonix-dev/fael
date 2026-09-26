@@ -5,7 +5,7 @@
 **Do not open a public GitHub issue for security vulnerabilities.**
 
 Use GitHub's private vulnerability reporting instead:
-[Report a vulnerability](https://github.com/inonix-dev/fael/security/advisories/new).
+[Report a vulnerability](https://github.com/zecalis/fael/security/advisories/new).
 
 ## Scope
 
