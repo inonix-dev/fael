@@ -23,6 +23,12 @@ pub struct Row {
     pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// Who has to answer (PLAN-fael-direction chunk 2): an `issue --to <who>`
+    /// routes a question to who must answer. Optional, stored lowercase.
+    /// A top-level field (not `extra`) so select/render read it without
+    /// parsing — old readers keep it in `extra` and stay compatible, no `v` bump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
@@ -32,6 +38,14 @@ pub struct Row {
 }
 
 impl Row {
+    /// Who this row routes to: the `to` field, falling back to a
+    /// hand-written `to` in `extra` (forward-compat read).
+    pub fn to_who(&self) -> Option<&str> {
+        self.to
+            .as_deref()
+            .or_else(|| self.extra.get("to").and_then(|v| v.as_str()))
+    }
+
     /// A fresh v1 add row stamped with a ULID and the current UTC time.
     pub fn new(by: &str, kind: &str, text: &str, files: Vec<String>) -> Row {
         let ms = now_ms();

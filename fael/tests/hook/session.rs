@@ -98,21 +98,99 @@ fn session_start_decisions_opt_in() {
     std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     let input = format!(r#"{{"cwd":{}}}"#, json(&d));
     // zero open issues + default config = no count line, only the report line
-    let (ok, _, err) = fael(&d, &["add", "decision", "use kickoff order", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &[
+            "add",
+            "decision",
+            "use kickoff order",
+            "--files",
+            "src/a.rs",
+        ],
+        "",
+    );
     assert!(ok, "{err}");
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
     assert!(ok && !out.contains("open issue"), "{out}");
     assert!(!out.contains("use kickoff order"), "{out}");
     // opt in: the freshest decision lists above the count line
-    std::fs::write(d.join(".fael/config.toml"), "[budget]\nsession_decisions = 1\n").unwrap();
+    std::fs::write(
+        d.join(".fael/config.toml"),
+        "[budget]\nsession_decisions = 1\n",
+    )
+    .unwrap();
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
     assert!(ok && out.contains("use kickoff order"), "{out}");
     assert!(!out.contains("open issue"), "{out}");
     // an open issue adds the count line below the decision
-    let (ok, _, err) = fael(&d, &["add", "issue", "login loops", "--files", "src/a.rs"], "");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "issue", "login loops", "--files", "src/a.rs"],
+        "",
+    );
     assert!(ok, "{err}");
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
     assert!(ok && out.contains("use kickoff order"), "{out}");
-    assert!(out.contains("1 open issue — fael find --kind issue"), "{out}");
+    assert!(
+        out.contains("1 open issue — fael find --kind issue"),
+        "{out}"
+    );
     assert!(!out.contains("login loops"), "{out}");
+}
+
+#[test]
+fn session_start_lists_to_me_above_the_count() {
+    let d = repo();
+    std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
+    let input = format!(r#"{{"cwd":{}}}"#, json(&d));
+    // the test repo's writer is Hook Test (hook-test-…): mixed case routes to it
+    let (ok, _, err) = fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            "answer me",
+            "--files",
+            "src/a.rs",
+            "--to",
+            "Hook-Test",
+        ],
+        "",
+    );
+    assert!(ok, "{err}");
+    let (ok, _, err) = fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            "answer them",
+            "--files",
+            "src/a.rs",
+            "--to",
+            "someone",
+        ],
+        "",
+    );
+    assert!(ok, "{err}");
+    let (ok, _, err) = fael(
+        &d,
+        &["add", "issue", "answer anyone", "--files", "src/a.rs"],
+        "",
+    );
+    assert!(ok, "{err}");
+    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(ok, "{out}");
+    // mine in full with the suffix, above a count that covers only the rest
+    assert!(out.contains("answer me (to: hook-test)"), "{out}");
+    assert!(!out.contains("answer them"), "{out}");
+    assert!(!out.contains("answer anyone"), "{out}");
+    assert!(
+        out.contains("2 more open issues — fael find --kind issue"),
+        "{out}"
+    );
+    let (mine, count) = (
+        out.find("answer me").unwrap(),
+        out.find("more open issues").unwrap(),
+    );
+    assert!(mine < count, "{out}");
 }

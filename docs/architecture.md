@@ -98,9 +98,9 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 
 | Command | What it does |
 |---|---|
-| `fael add <kind> "<text>" --files a,b [--key k] [--supersedes id]` | append a row |
+| `fael add <kind> "<text>" --files a,b [--key k] [--to who] [--supersedes id]` | append a row |
 | `fael close <id> "<why>"` | append a close row |
-| `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
+| `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--to who] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
 | `fael mv <old> <new>` | record a move git can't see — an anchor, an uncommitted rewrite, or one file split into several (one old path may point at many new ones). Adds matches only, never hides a row |
 | `fael kickoff [anchor]` | the session brief: open issues, then the rest by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
@@ -138,8 +138,8 @@ row_bytes = 10240             # hard cap, never above 10 KiB
 
 | Tool | Input | Notes |
 |---|---|---|
-| `find` | `files[]` `text` `key` `kind` `since` `limit` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool |
-| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
+| `find` | `files[]` `text` `key` `kind` `since` `to` `limit` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool |
+| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `to?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
 | `close` | `id` `text` | |
 
 ### Hook protocol
@@ -193,7 +193,7 @@ Edits, not commits, are the primary signal: many agents are told never to commit
 
 **Session start:**
 ```
-client ─(session-start)─▶ core.kickoff ─▶ open issues · recent decisions · N rows on unmerged branches ─▶ context
+client ─(session-start)─▶ open issues to you in full · N freshest open decisions (opt-in) · count line for the rest ─▶ context
 ```
 
 **Across branches** (one branch per person or per agent):

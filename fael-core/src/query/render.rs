@@ -45,9 +45,13 @@ pub fn render(log: &Log, rows: &[&Row], budget: usize) -> String {
             ""
         };
         let key = r.key.as_ref().map(|k| format!(" #{k}")).unwrap_or_default();
+        let to = r
+            .to_who()
+            .map(|t| format!(" (to: {t})"))
+            .unwrap_or_default();
         let text = r.text.split_whitespace().collect::<Vec<_>>().join(" ");
         let line = format!(
-            "- [{id}] {}{mark}{key} {text} → {}\n",
+            "- [{id}] {}{mark}{key} {text}{to} → {}\n",
             r.kind,
             r.files.join(", ")
         );

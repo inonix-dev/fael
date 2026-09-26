@@ -24,6 +24,11 @@ pub fn validate(row: &Row, cfg: &Config) -> Result<(), String> {
     if let Some(k) = &row.key {
         valid_key(k)?;
     }
+    if let Some(t) = row.to_who()
+        && t.trim().is_empty()
+    {
+        return Err("rejected: to is empty — name who has to answer, e.g. --to ploy".into());
+    }
     check_common(row, cfg)
 }
 

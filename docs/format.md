@@ -43,6 +43,7 @@ Reference implementation: [`fael-core`](../fael-core/src).
 | `text` | yes | non-empty, written to stand alone |
 | `files` | yes, ≥ 1 | stable references: repo-relative paths (`src/a.rs` — never `./`, `..`, absolute or `\`), or `scheme:ref` anchors (`issue:#12`, `doc:pricing`; scheme ≥ 2 chars `[a-z0-9+.-]` starting with a letter, ref non-empty and opaque) |
 | `key` | no | `:`-separated segments of `[a-z0-9._-]+`, ≤ 64 chars, e.g. `auth:session:timeout` |
+| `to` | no | who has to answer, e.g. `ploy` — stored lowercase; an `issue --to <who>` lists in full at that reader's session start, everyone else only counts it |
 | `supersedes` | no | id of an older row this one replaces |
 | `client` `model` `session` `branch` `sha` | no | filled in by tools, never by the agent |
 

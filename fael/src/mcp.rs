@@ -3,7 +3,7 @@
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
 
-use crate::{Filter, aliases, close_row, core, read, repo, write::add_row};
+use crate::{Filter, aliases, close_row, core, read, repo, write::AddOpts, write::add_row};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -95,6 +95,7 @@ fn find(a: &Value) -> Result<String, String> {
         key: s(a, "key"),
         kind: s(a, "kind"),
         since: s(a, "since"),
+        to: s(a, "to").map(|t| t.trim().to_lowercase()),
         ..Filter::default()
     };
     let (mut rows, budget) = core::query(&log, &f, &r.cfg);
@@ -115,9 +116,12 @@ fn add(a: &Value) -> Result<String, String> {
         &need(a, "kind")?,
         &need(a, "text")?,
         &files(a),
-        s(a, "key"),
-        s(a, "supersedes"),
-        a["force"].as_bool().unwrap_or(false),
+        AddOpts {
+            key: s(a, "key"),
+            to: s(a, "to"),
+            supersedes: s(a, "supersedes"),
+            force: a["force"].as_bool().unwrap_or(false),
+        },
     )?;
     Ok(done(&row.id, warns))
 }
@@ -150,6 +154,7 @@ fn tools() -> Value {
                 "key": str_("key glob, e.g. auth:*"),
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "since": str_("yyyy-mm or yyyy-mm-dd"),
+                "to": str_("only rows routed to this reader, e.g. ploy"),
                 "limit": {"type": "integer", "minimum": 1},
             }},
         },
@@ -166,6 +171,7 @@ fn tools() -> Value {
                 "files": {"type": "array", "items": {"type": "string"},
                     "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),
+                "to": str_("who has to answer, e.g. ploy — routed to them at their session start"),
                 "supersedes": str_("id of the row this one replaces"),
                 "force": {"type": "boolean", "description": "file a path that looks like a typo of an existing file (a file not created yet)"},
             }},

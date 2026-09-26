@@ -29,6 +29,9 @@ pub struct Filter {
     /// lower bound on `ts`, as a prefix: `2026-09` or `2026-09-20`
     pub since: Option<String>,
     pub by: Option<String>,
+    /// who the row routes to (`issue --to <who>`) — exact match on the
+    /// lowercased value; session start matches this against the reader
+    pub to: Option<String>,
     /// show closed and superseded rows too
     pub all: bool,
 }
@@ -42,5 +45,6 @@ impl Filter {
             && self.kind.is_none()
             && self.since.is_none()
             && self.by.is_none()
+            && self.to.is_none()
     }
 }

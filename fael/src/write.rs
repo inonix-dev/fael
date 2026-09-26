@@ -10,6 +10,14 @@ use crate::{core, hook};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// Optional fields for `add_row` — bundled so the arg count stays under the lint.
+pub(crate) struct AddOpts {
+    pub key: Option<String>,
+    pub to: Option<String>,
+    pub supersedes: Option<String>,
+    pub force: bool,
+}
+
 /// Normalise files against cwd, then core's add path — shared by the CLI and MCP.
 /// No files: inherit the files this session edited (after the newest row);
 /// still empty without a hook session, and core keeps rejecting that.
@@ -20,10 +28,14 @@ pub(crate) fn add_row(
     kind: &str,
     text: &str,
     files: &[String],
-    key: Option<String>,
-    supersedes: Option<String>,
-    force: bool,
+    opts: AddOpts,
 ) -> Result<(core::Row, PathBuf, Vec<String>), String> {
+    let AddOpts {
+        key,
+        to,
+        supersedes,
+        force,
+    } = opts;
     let mut files = core::normalize_files(files, &r.cwd, &r.root)?;
     let log = crate::read(r);
     if files.is_empty() {
@@ -39,6 +51,10 @@ pub(crate) fn add_row(
     let st = crate::stamp(r);
     let mut row = core::Row::new(&st.by, kind, text, files);
     row.key = key;
+    // everything identity-like is lowercase: `--to Delamind` stores `delamind`
+    row.to = to
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty());
     let (row, path, mut core_warns) =
         core::add_row(&r.fael, &log, &r.cfg, &st, row, supersedes.as_deref())?;
     warns.append(&mut core_warns);

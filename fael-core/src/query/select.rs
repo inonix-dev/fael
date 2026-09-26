@@ -49,6 +49,9 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
                 && !is_alias_row(r)
                 && f.kind.as_ref().is_none_or(|k| &r.kind == k)
                 && f.by.as_ref().is_none_or(|b| &r.by == b)
+                && f.to
+                    .as_ref()
+                    .is_none_or(|t| r.to_who().is_some_and(|w| w == t))
                 && f.since.as_ref().is_none_or(|s| r.ts.as_str() >= s.as_str())
                 && f.key
                     .as_ref()

@@ -27,18 +27,26 @@ pub(crate) fn session_start(e: &Event) -> Reply {
     // the read/edit push (which never spawns git) resolves them — and kickoff
     // keeps rows whose files were merely renamed
     let al = aliases::load(&c.repo, &c.log, true);
-    // PLAN-fael-direction chunk 1: session start carries no row dump. Every
-    // open issue still pushes the moment its file is touched; the pull
-    // (`fael find --kind issue`) already exists. Opt-in context: the N
-    // freshest open decisions (`budget.session_decisions`, default 0).
-    let open_issues = core::find(
+    // PLAN-fael-direction chunk 2: issues `to` this reader are the reader's
+    // job — listed in full above the count line; the count covers the rest.
+    // `to` never changes push or find. Reader identity needs git, which
+    // session-start already spawns (aliases refresh above, check-ignore
+    // below); read/edit never compute it (SPEC fail examples).
+    let reader = crate::writer(&c.repo);
+    let mut mine: Vec<&core::Row> = vec![];
+    let mut rest = 0;
+    for r in core::find(
         &c.log,
         &Filter {
             kind: Some("issue".into()),
             ..Filter::default()
         },
-    )
-    .len();
+    ) {
+        match r.to_who() {
+            Some(t) if core::to_matches(t, &reader) => mine.push(r),
+            _ => rest += 1,
+        }
+    }
     let decisions: Vec<_> = if c.repo.cfg.session_decisions == 0 {
         vec![]
     } else {
@@ -55,12 +63,14 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         .take(c.repo.cfg.session_decisions)
         .collect()
     };
-    let mut body = core::render(&c.log, &decisions, c.repo.cfg.kickoff_tokens);
-    if open_issues > 0 {
+    let mut body = core::render(&c.log, &mine, c.repo.cfg.kickoff_tokens);
+    body.push_str(&core::render(&c.log, &decisions, c.repo.cfg.kickoff_tokens));
+    if rest > 0 {
         body.push_str(&format!(
-            "fael: {} open {} — fael find --kind issue (MCP find kind=issue); each also pushes when you touch its file\n",
-            open_issues,
-            if open_issues == 1 { "issue" } else { "issues" },
+            "fael: {} {}open {} — fael find --kind issue (MCP find kind=issue); each also pushes when you touch its file\n",
+            rest,
+            if mine.is_empty() { "" } else { "more " },
+            if rest == 1 { "issue" } else { "issues" },
         ));
     }
     let adopted = c.repo.fael.join("log").is_dir();
@@ -85,7 +95,11 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         "session-start",
         &c.repo.root,
         &context,
-        &decisions.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        &mine
+            .iter()
+            .chain(decisions.iter())
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>(),
     );
     Reply {
         block: false,

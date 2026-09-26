@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage:
-  fael add <kind> \"<text>\" [--files a,b] [--key k] [--supersedes id] [--force]
+  fael add <kind> \"<text>\" [--files a,b] [--key k] [--to who] [--supersedes id] [--force]
       (no --files = the files this session edited, as the edit hook recorded;
        --force files a path that looks like a typo of an existing one)
   fael close <id> \"<why>\"
-  fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
+  fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--to who] [--all]
   fael keys [glob]
   fael kickoff [file|anchor]
   fael mv <old> <new>           record a move git can't see (anchors, uncommitted rewrites)
@@ -109,7 +109,7 @@ impl Args {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
-                | "before" | "map" => {
+                | "before" | "map" | "to" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -227,7 +227,8 @@ pub(crate) fn read(r: &Repo) -> Log {
 }
 
 /// Writer id from git identity; no email → hostname hash, with a warning.
-fn writer(r: &Repo) -> String {
+/// `pub(crate)` — the session-start hook matches `--to` against it.
+pub(crate) fn writer(r: &Repo) -> String {
     let name = git(&r.root, &["config", "user.name"]).unwrap_or_default();
     let email = git(&r.root, &["config", "user.email"]);
     let host = Command::new("hostname")
@@ -265,9 +266,12 @@ fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
         kind,
         text,
         &a.files(),
-        a.one("key"),
-        a.one("supersedes"),
-        a.has("force"),
+        write::AddOpts {
+            key: a.one("key"),
+            to: a.one("to"),
+            supersedes: a.one("supersedes"),
+            force: a.has("force"),
+        },
     )?;
     warns.iter().for_each(|w| eprintln!("{w}"));
     written(a, &r, &row, &path);
@@ -324,6 +328,7 @@ fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
         kind: a.one("kind"),
         since: a.one("since"),
         by: a.one("by"),
+        to: a.one("to").map(|t| t.trim().to_lowercase()),
         all: a.has("all"),
     };
     let (rows, budget) = core::query(&log, &f, &r.cfg);

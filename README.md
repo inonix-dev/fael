@@ -86,6 +86,7 @@ Agents use the `fael` MCP server (`find`, `add`, `close`). You can use the same 
 fael kickoff                                             # what this session should know
 fael find --files src/pay.rs                             # everything about one file
 fael add bug "refund rounds down on JPY" --files src/pay.rs
+fael add issue "count from order date or ship date?" --to finance --files src/pay.rs
 fael close <id> "fixed in 4f2a91c"
 fael mv src/pay.rs src/pay/refund.rs                     # a split git can't see — rows follow
 fael doctor                                              # check the setup (e.g. a gitignored .fael/log)

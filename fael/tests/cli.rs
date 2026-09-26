@@ -237,6 +237,90 @@ fn mcp_round_trip() {
 }
 
 #[test]
+fn add_to_routes_lowercases_and_supersedes() {
+    let d = repo();
+    // mixed case on write stores lowercase (everything identity-like is)
+    let (ok, out, err) = fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            "which date counts?",
+            "--files",
+            "src/a.rs",
+            "--to",
+            "Finance",
+        ],
+    );
+    assert!(ok, "{err}");
+    let id = out.split_whitespace().next().unwrap().to_string();
+    let (_, out, _) = fael(&d, &["find", "--json", "--to", "finance"]);
+    assert!(out.contains("\"to\":\"finance\""), "{out}");
+    // upper-case query matches the stored lowercase
+    let (_, out, _) = fael(&d, &["find", "--to", "FINANCE"]);
+    assert!(out.contains("which date counts?"), "{out}");
+    let (_, out, _) = fael(&d, &["find", "--to", "someone"]);
+    assert!(out.is_empty(), "{out}");
+    // `to` narrows only: the file query still shows the row, with the suffix
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs"]);
+    assert!(out.contains("which date counts? (to: finance)"), "{out}");
+    // answering via supersedes removes it from the to-do (verify, not reimplement)
+    let (ok, _, err) = fael(
+        &d,
+        &[
+            "add",
+            "decision",
+            "ship date, per finance",
+            "--files",
+            "src/a.rs",
+            "--supersedes",
+            &id,
+        ],
+    );
+    assert!(ok, "{err}");
+    let (_, out, _) = fael(&d, &["find", "--to", "finance"]);
+    assert!(out.is_empty(), "{out}");
+}
+
+#[test]
+fn mcp_add_find_to() {
+    use std::io::Write;
+    let d = repo();
+    let msgs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"kind":"issue","text":"whose call is it","files":["src/a.rs"],"to":"Ploy"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find","arguments":{"to":"ploy"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find","arguments":{"to":"delamind"}}}"#,
+    ];
+    let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
+        .arg("mcp")
+        .env("FAEL_STATE_DIR", d.join("state"))
+        .current_dir(&d)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin
+        .take()
+        .unwrap()
+        .write_all((msgs.join("\n") + "\n").as_bytes())
+        .unwrap();
+    let out = String::from_utf8(c.wait_with_output().unwrap().stdout).unwrap();
+    let r: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(r.len(), 3, "{out}");
+    assert_eq!(r[0]["result"]["isError"], false, "{out}");
+    let text = r[1]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("whose call is it (to: ploy)"), "{text}");
+    assert_eq!(
+        r[2]["result"]["content"][0]["text"].as_str().unwrap(),
+        "no rows match",
+        "{out}"
+    );
+}
+
+#[test]
 fn worktree_root_is_where_dot_git_file_sits() {
     // a linked worktree has `.git` as a file — root must be the worktree, not the main repo
     let d = repo();
