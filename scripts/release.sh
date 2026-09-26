@@ -1,6 +1,6 @@
 #!/bin/sh
 # Cut a release: bump fael/Cargo.toml, commit + tag on main, push.
-# The tag runs .github/workflows/release.yml → GitHub Release + npm @inonix/fael + Homebrew tap.
+# The tag runs .github/workflows/release.yml → GitHub Release + npm @zecalis/fael + Homebrew tap.
 # usage: scripts/release.sh [patch|minor|major]   (default patch)
 set -eu
 cd "$(git rev-parse --show-toplevel)"
@@ -56,7 +56,7 @@ done
 [ -n "$run" ] || { echo "release: no release.yml run for v$new after 60s — check Actions" >&2; exit 1; }
 gh run watch "$run" --exit-status >/dev/null || { echo "release: release.yml run $run failed — gh run rerun $run --failed" >&2; exit 1; }
 echo "release.yml $run green"
-if npm ls -g @inonix/fael >/dev/null 2>&1; then
-  npm i -g "@inonix/fael@$new" >/dev/null && echo "local fael -> $new (npm)" \
-    || echo "release: npm has no $new yet (registry lag) — run: npm i -g @inonix/fael@$new" >&2
+if npm ls -g @zecalis/fael >/dev/null 2>&1; then
+  npm i -g "@zecalis/fael@$new" >/dev/null && echo "local fael -> $new (npm)" \
+    || echo "release: npm has no $new yet (registry lag) — run: npm i -g @zecalis/fael@$new" >&2
 fi

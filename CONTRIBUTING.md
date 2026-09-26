@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Development setup
 
 ```bash
-git clone https://github.com/inonix-dev/fael.git
+git clone https://github.com/zecalis/fael.git
 cd fael
 cargo test --workspace
 ```
@@ -90,4 +90,4 @@ scripts/release.sh minor    # 0.0.2 -> 0.1.0
 
 It bumps `fael/Cargo.toml`, commits `release vX.Y.Z` on `main`, tags it and pushes. The tag runs
 `.github/workflows/release.yml`, which builds every platform and publishes the GitHub Release, npm
-`@inonix/fael` and the Homebrew formula together.
+`@zecalis/fael` and the Homebrew formula together.

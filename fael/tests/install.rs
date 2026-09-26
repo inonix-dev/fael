@@ -176,7 +176,7 @@ fn install_refuses_when_fael_not_on_path() {
 fn install_points_hooks_past_the_npm_wrapper() {
     let root = std::env::temp_dir().join(format!("fael-npm-{}", fael_core::ulid()));
     let home = root.join("home");
-    let pkg = root.join("prefix/lib/node_modules/@inonix/fael");
+    let pkg = root.join("prefix/lib/node_modules/@zecalis/fael");
     let real = pkg.join("node_modules/.bin_real/fael");
     std::fs::create_dir_all(real.parent().unwrap()).unwrap();
     std::fs::create_dir_all(root.join("prefix/bin")).unwrap();
@@ -184,7 +184,7 @@ fn install_points_hooks_past_the_npm_wrapper() {
     std::fs::write(pkg.join("run-fael.js"), "").unwrap();
     std::fs::write(&real, "").unwrap();
     std::os::unix::fs::symlink(
-        "../lib/node_modules/@inonix/fael/run-fael.js",
+        "../lib/node_modules/@zecalis/fael/run-fael.js",
         root.join("prefix/bin/fael"),
     )
     .unwrap();
