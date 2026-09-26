@@ -154,8 +154,12 @@ fn bump_rewrites_only_the_moved_row() {
     assert_eq!(b2.supersedes.as_deref(), Some(b.id.as_str()));
     // the old B left every list; A kept its id and number
     let l = read(&dir);
-    let got = ids(&find(&l, &Filter::default()));
-    assert!(!got.contains(&b.id[24..].to_string()), "{got:?}");
+    // full ids: the 2-char tails from ids() collide by chance (~1 in 500 runs)
+    let got: Vec<&str> = find(&l, &Filter::default())
+        .iter()
+        .map(|r| r.id.as_str())
+        .collect();
+    assert!(!got.contains(&b.id.as_str()), "{got:?}");
     let a_still = find(&l, &Filter::default())
         .into_iter()
         .find(|r| r.id == a.id)
