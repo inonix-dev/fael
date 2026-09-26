@@ -206,6 +206,43 @@ fn install_points_hooks_past_the_npm_wrapper() {
     assert!(s.contains(&want), "{want}\n{s}");
 }
 
+/// An npm scope move (@inonix -> @zecalis) leaves every MCP entry on a deleted
+/// binary: a fael path is repointed, anything else is left alone.
+#[test]
+fn install_repoints_mcp_left_on_an_old_fael_binary() {
+    let home = std::env::temp_dir().join(format!("fael-mcp-{}", fael_core::ulid()));
+    let codex = home.join(".codex/config.toml");
+    let oc = home.join(".config/opencode/opencode.jsonc");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+    let old = "/opt/homebrew/lib/node_modules/@inonix/fael/node_modules/.bin_real/fael";
+    std::fs::write(
+        &codex,
+        format!("# mine\n[mcp_servers.fael]\ncommand = \"{old}\"\nargs = [\"mcp\"]\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        &oc,
+        format!("{{\n  // mine\n  \"mcp\": {{\"fael\": {{\"type\": \"local\", \"command\": [\"{old}\", \"mcp\"]}}}}\n}}\n"),
+    )
+    .unwrap();
+    let out = install(&home, &["--client", "codex"]) + &install(&home, &["--client", "opencode"]);
+    assert!(out.contains("mcp_servers.fael (repointed)"), "{out}");
+    assert!(out.contains("mcp.fael (repointed)"), "{out}");
+    for p in [&codex, &oc] {
+        let s = read(p);
+        assert!(!s.contains("@inonix") && s.contains("mine"), "{s}");
+    }
+    // second run: nothing left to repoint
+    let again = install(&home, &["--client", "codex"]) + &install(&home, &["--client", "opencode"]);
+    assert!(!again.contains("repointed"), "{again}");
+    // a server named fael that is not a fael binary stays
+    std::fs::write(&codex, "[mcp_servers.fael]\ncommand = \"/usr/bin/other\"\n").unwrap();
+    let out = install(&home, &["--client", "codex"]);
+    assert!(out.contains("left alone"), "{out}");
+    assert!(read(&codex).contains("/usr/bin/other"));
+}
+
 /// Native Windows has no HOME (only USERPROFILE) — install must still find
 /// the home dir. Dry run: nothing is written to the real home. A machine with
 /// no client installed (CI) still fails later with "found no Claude Code",

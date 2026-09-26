@@ -16,10 +16,20 @@ pub(crate) fn opencode(c: &Ctx) -> Result<(), String> {
     let mut what = vec![];
     // ponytail: JSONC edited as text so comments survive. The probes are
     // substring checks — a key named "fael"/"mcp" inside a comment fools them.
+    let exe = serde_json::to_string(&c.exe).map_err(|e| e.to_string())?;
     if s.contains("\"fael\":") {
-        println!("  mcp fael already set");
+        match mcp_command(&s) {
+            Some((_, v)) if v == c.exe => println!("  mcp fael already set"),
+            Some((r, v)) if v.contains("fael") => {
+                s.replace_range(r, &exe);
+                what.push("mcp.fael (repointed)");
+            }
+            _ => println!(
+                "  ! mcp.fael in {} is not a fael binary — left alone",
+                path.display()
+            ),
+        }
     } else {
-        let exe = serde_json::to_string(&c.exe).map_err(|e| e.to_string())?;
         let entry = format!("\"fael\": {{\"type\": \"local\", \"command\": [{exe}, \"mcp\"]}}");
         s = match s.find("\"mcp\"") {
             Some(i) => insert_first(&s, i, &entry),
@@ -95,9 +105,30 @@ fn insert_first(s: &str, from: usize, entry: &str) -> Option<String> {
     Some(format!("{}\n  {entry}{comma}{}", &s[..brace], &s[brace..]))
 }
 
+/// The first string of `"command": [...]` after `"fael":`, with its byte range.
+// ponytail: text probe like the rest — the caller only rewrites a value naming fael
+fn mcp_command(s: &str) -> Option<(std::ops::Range<usize>, String)> {
+    let f = s.find("\"fael\":")?;
+    let c = f + s[f..].find("\"command\"")?;
+    let b = c + s[c..].find('[')?;
+    let q = b + s[b..].find('"')?;
+    let mut it = serde_json::Deserializer::from_str(&s[q..]).into_iter::<String>();
+    let v = it.next()?.ok()?;
+    Some((q..q + it.byte_offset(), v))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::insert_first;
+    use super::{insert_first, mcp_command};
+
+    #[test]
+    fn jsonc_mcp_command() {
+        let s = r#"{ "mcp": { "fael": {"type": "local", "command": ["/o\"ld/fael", "mcp"]} } }"#;
+        let (r, v) = mcp_command(s).unwrap();
+        assert_eq!(v, "/o\"ld/fael");
+        assert_eq!(&s[r], r#""/o\"ld/fael""#);
+        assert!(mcp_command(r#"{"mcp": {}}"#).is_none());
+    }
 
     #[test]
     fn jsonc_insert() {
