@@ -71,6 +71,21 @@ fn size_and_secret_rejected() {
 }
 
 #[test]
+fn urgent_is_for_issues() {
+    let mut r = row("issue", &["a.rs"]);
+    r.urgent = Some(1.0);
+    assert!(validate(&r, &Config::default()).is_ok());
+    r.kind = "decision".into();
+    assert!(
+        validate(&r, &Config::default())
+            .unwrap_err()
+            .contains("urgent is for issues")
+    );
+    r.kind = "note".into();
+    assert!(validate(&r, &Config::default()).is_err());
+}
+
+#[test]
 fn files_normalised_to_repo_relative() {
     let (root, cwd) = (PathBuf::from("/r/repo"), PathBuf::from("/r/repo/src"));
     let n = |f: &str| normalize_files(&[f.to_string()], &cwd, &root);

@@ -1,4 +1,4 @@
-//! `fael mcp` — MCP over stdio: newline-delimited JSON-RPC 2.0, three tools (find · add · close).
+//! `fael mcp` — MCP over stdio: newline-delimited JSON-RPC 2.0, four tools (find · add · close · bump).
 //! Blocking std I/O, one request at a time — no async runtime on this path (PLAN §4).
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
@@ -58,7 +58,8 @@ fn call(p: &Value) -> Value {
         "find" => find(args),
         "add" => add(args),
         "close" => close(args),
-        n => Err(format!("unknown tool {n} — fael has find, add, close")),
+        "bump" => bump(args),
+        n => Err(format!("unknown tool {n} — fael has find, add, close, bump")),
     };
     let (text, is_error) = match res {
         Ok(t) => (t, false),
@@ -119,9 +120,50 @@ fn add(a: &Value) -> Result<String, String> {
         AddOpts {
             key: s(a, "key"),
             to: s(a, "to"),
+            urgent: urgent_ask(a)?,
             supersedes: s(a, "supersedes"),
             force: a["force"].as_bool().unwrap_or(false),
         },
+    )?;
+    Ok(done(&row.id, warns))
+}
+
+/// `add --urgent` over MCP: `urgent` files at the back of the queue,
+/// `urgent_before` just above that row — one of the two at most.
+fn urgent_ask(a: &Value) -> Result<core::Urgent, String> {
+    match (
+        a["urgent"].as_bool().unwrap_or(false),
+        s(a, "urgent_before"),
+    ) {
+        (false, None) => Ok(core::Urgent::Unset),
+        (true, None) => Ok(core::Urgent::End),
+        (false, Some(t)) => Ok(core::Urgent::Before(t)),
+        (true, Some(_)) => Err("urgent and urgent_before pick one".into()),
+    }
+}
+
+fn bump(a: &Value) -> Result<String, String> {
+    let r = repo()?;
+    let log = read(&r);
+    let urgent = match (
+        a["urgent"].as_bool().unwrap_or(false),
+        s(a, "urgent_before"),
+        a["not_urgent"].as_bool().unwrap_or(false),
+    ) {
+        (false, None, false) => core::UrgentChange::Keep,
+        (true, None, false) => core::UrgentChange::End,
+        (false, Some(t), false) => core::UrgentChange::Before(t),
+        (false, None, true) => core::UrgentChange::Remove,
+        _ => return Err("urgent, urgent_before and not_urgent pick one".into()),
+    };
+    let (row, _, warns) = core::bump_row(
+        &r.fael,
+        &log,
+        &r.cfg,
+        &crate::stamp(&r),
+        &need(a, "id")?,
+        s(a, "to"),
+        urgent,
     )?;
     Ok(done(&row.id, warns))
 }
@@ -172,6 +214,8 @@ fn tools() -> Value {
                     "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),
                 "to": str_("who has to answer, e.g. ploy — routed to them at their session start"),
+                "urgent": {"type": "boolean", "description": "file at the back of the urgent queue (issues only)"},
+                "urgent_before": str_("file just above this row in the urgent queue — one of urgent / urgent_before at most"),
                 "supersedes": str_("id of the row this one replaces"),
                 "force": {"type": "boolean", "description": "file a path that looks like a typo of an existing file (a file not created yet)"},
             }},
@@ -182,6 +226,17 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "required": ["id", "text"], "properties": {
                 "id": str_("row id or a unique prefix, as find shows it"),
                 "text": str_("why it is closed, e.g. fixed in <sha>"),
+            }},
+        },
+        {
+            "name": "bump",
+            "description": "Change routing/urgency on an open row as a new version: same text and files, new to/urgent, superseding the old row. Text and files never change through bump.",
+            "inputSchema": {"type": "object", "required": ["id"], "properties": {
+                "id": str_("row id or a unique prefix, as find shows it"),
+                "to": str_("who has to answer now, e.g. ploy — omit to keep"),
+                "urgent": {"type": "boolean", "description": "move to the back of the urgent queue"},
+                "urgent_before": str_("move just above this row in the urgent queue"),
+                "not_urgent": {"type": "boolean", "description": "leave the urgent queue"},
             }},
         },
     ])

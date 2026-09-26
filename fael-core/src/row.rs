@@ -29,6 +29,12 @@ pub struct Row {
     /// parsing — old readers keep it in `extra` and stay compatible, no `v` bump.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// Where the issue sits in the urgent queue (chunk 3): absent = not
+    /// urgent, present = urgent with lower more urgent. Fractional indexing —
+    /// `--urgent` files at the end, `--urgent-before <id>` just above that
+    /// row, `fael bump` moves it later. Top-level like `to`, same compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgent: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
@@ -44,6 +50,21 @@ impl Row {
         self.to
             .as_deref()
             .or_else(|| self.extra.get("to").and_then(|v| v.as_str()))
+    }
+
+    /// The row's urgent number, if any: the `urgent` field, falling back to a
+    /// hand-written `urgent` in `extra` (a number, or a numeric string).
+    /// Non-finite values read as absent — ranking must stay deterministic.
+    pub fn urgent_value(&self) -> Option<f64> {
+        self.urgent
+            .or_else(|| {
+                self.extra.get("urgent").and_then(|v| match v {
+                    Value::Number(n) => n.as_f64(),
+                    Value::String(s) => s.trim().parse().ok(),
+                    _ => None,
+                })
+            })
+            .filter(|u| u.is_finite())
     }
 
     /// A fresh v1 add row stamped with a ULID and the current UTC time.

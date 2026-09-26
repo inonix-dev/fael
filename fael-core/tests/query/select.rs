@@ -4,22 +4,25 @@ use super::{files, ids, log, row};
 use fael_core::*;
 
 #[test]
-fn find_hides_closed_and_superseded_newest_first() {
+fn find_hides_closed_and_superseded_ranked() {
     let l = log();
-    assert_eq!(ids(&find(&l, &Filter::default())), ["15", "14", "13", "12"]);
+    assert_eq!(ids(&find(&l, &Filter::default())), ["13", "14", "15", "12"]);
     let all = Filter {
         all: true,
         ..Filter::default()
     };
-    assert_eq!(ids(&find(&l, &all)), ["15", "14", "13", "12", "11", "10"]);
+    assert_eq!(
+        ids(&find(&l, &all)),
+        ["13", "10", "14", "11", "15", "12"]
+    );
 }
 
 #[test]
 fn files_exact_zone_glob_and_legacy() {
     let l = log();
     assert_eq!(ids(&find(&l, &files(&["src/a.rs"]))), ["14"]);
-    assert_eq!(ids(&find(&l, &files(&["src"]))), ["14", "13", "12"]); // dir = zone
-    assert_eq!(ids(&find(&l, &files(&["src/"]))), ["14", "13", "12"]);
+    assert_eq!(ids(&find(&l, &files(&["src"]))), ["13", "14", "12"]); // dir = zone
+    assert_eq!(ids(&find(&l, &files(&["src/"]))), ["13", "14", "12"]);
     assert!(find(&l, &files(&["sr"])).is_empty()); // prefix must end at a `/`
     assert_eq!(ids(&find(&l, &files(&["src/c.rs"]))), ["13"]); // `.\src\c.rs` read leniently
     assert_eq!(ids(&find(&l, &files(&["src/*/*.rs"]))), ["12"]);
@@ -52,14 +55,14 @@ fn key_kind_text_since() {
             text: Some("TEXT OF A0".into()),
             ..Filter::default()
         }),
-        ["14", "13", "12"]
+        ["13", "14", "12"]
     );
     assert_eq!(
         f(Filter {
             since: Some("2026-09-14".into()),
             ..Filter::default()
         }),
-        ["15", "14"]
+        ["14", "15"]
     );
 }
 

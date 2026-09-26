@@ -27,26 +27,21 @@ pub(crate) fn session_start(e: &Event) -> Reply {
     // the read/edit push (which never spawns git) resolves them — and kickoff
     // keeps rows whose files were merely renamed
     let al = aliases::load(&c.repo, &c.log, true);
-    // PLAN-fael-direction chunk 2: issues `to` this reader are the reader's
-    // job — listed in full above the count line; the count covers the rest.
-    // `to` never changes push or find. Reader identity needs git, which
+    // PLAN-fael-direction chunk 3: issues `to` this reader are the reader's
+    // job, and urgent issues with no `to` belong to nobody — both list in
+    // full above the count line; the count covers every open issue. `to` and
+    // `urgent` never change push or find. Reader identity needs git, which
     // session-start already spawns (aliases refresh above, check-ignore
     // below); read/edit never compute it (SPEC fail examples).
     let reader = crate::writer(&c.repo);
-    let mut mine: Vec<&core::Row> = vec![];
-    let mut rest = 0;
-    for r in core::find(
+    let open: Vec<&core::Row> = core::find(
         &c.log,
         &Filter {
             kind: Some("issue".into()),
             ..Filter::default()
         },
-    ) {
-        match r.to_who() {
-            Some(t) if core::to_matches(t, &reader) => mine.push(r),
-            _ => rest += 1,
-        }
-    }
+    );
+    let t = todo(open, &reader);
     let decisions: Vec<_> = if c.repo.cfg.session_decisions == 0 {
         vec![]
     } else {
@@ -63,15 +58,10 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         .take(c.repo.cfg.session_decisions)
         .collect()
     };
-    let mut body = core::render(&c.log, &mine, c.repo.cfg.kickoff_tokens);
+    let mut body = core::render(&c.log, &t.listed, c.repo.cfg.kickoff_tokens);
     body.push_str(&core::render(&c.log, &decisions, c.repo.cfg.kickoff_tokens));
-    if rest > 0 {
-        body.push_str(&format!(
-            "fael: {} {}open {} — fael find --kind issue (MCP find kind=issue); each also pushes when you touch its file\n",
-            rest,
-            if mine.is_empty() { "" } else { "more " },
-            if rest == 1 { "issue" } else { "issues" },
-        ));
+    if let Some(line) = count_line(&t) {
+        body.push_str(&line);
     }
     let adopted = c.repo.fael.join("log").is_dir();
     let mut context = match (body.is_empty(), adopted) {
@@ -95,7 +85,7 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         "session-start",
         &c.repo.root,
         &context,
-        &mine
+        &t.listed
             .iter()
             .chain(decisions.iter())
             .map(|r| r.id.clone())
@@ -106,6 +96,73 @@ pub(crate) fn session_start(e: &Event) -> Reply {
         reason: None,
         context: Some(context),
     }
+}
+
+/// Open issues grouped for session start: mine (`to` = reader, the reader's
+/// job) plus hot (urgent with no `to` — nobody owns them, so everyone sees
+/// them in full). Both list in full, ranked; everything else counts only.
+struct Todo<'a> {
+    listed: Vec<&'a core::Row>,
+    to_you: usize,
+    to_you_urgent: usize,
+    hot: usize,
+    total: usize,
+}
+
+fn todo<'a>(open: Vec<&'a core::Row>, reader: &str) -> Todo<'a> {
+    let total = open.len();
+    let mut mine = vec![];
+    let mut unowned = vec![];
+    let mut to_you_urgent = 0;
+    for r in open {
+        match r.to_who() {
+            Some(t) if core::to_matches(t, reader) => {
+                to_you_urgent += usize::from(r.urgent_value().is_some());
+                mine.push(r);
+            }
+            None if r.urgent_value().is_some() => unowned.push(r),
+            _ => {}
+        }
+    }
+    let (to_you, hot) = (mine.len(), unowned.len());
+    let listed = core::ranked(
+        mine.into_iter().chain(unowned).collect(),
+        Some(reader),
+        |_| 0,
+        core::fresh_ts,
+    );
+    Todo {
+        listed,
+        to_you,
+        to_you_urgent,
+        hot,
+        total,
+    }
+}
+
+/// The one-line count summary, generated from the log, not prose. Zero open
+/// issues = no line (chunk 1); zero segments are skipped, the total always
+/// shows: `fael: 2 to you (1 urgent) · 1 urgent unassigned · 7 open — …`.
+fn count_line(t: &Todo) -> Option<String> {
+    if t.total == 0 {
+        return None;
+    }
+    let mut parts = vec![];
+    if t.to_you > 0 {
+        parts.push(format!("{} to you ({} urgent)", t.to_you, t.to_you_urgent));
+    }
+    if t.hot > 0 {
+        parts.push(format!("{} urgent unassigned", t.hot));
+    }
+    parts.push(format!(
+        "{} open {}",
+        t.total,
+        if t.total == 1 { "issue" } else { "issues" }
+    ));
+    Some(format!(
+        "fael: {} — fael find --kind issue (MCP find kind=issue); each also pushes when you touch its file\n",
+        parts.join(" · ")
+    ))
 }
 
 /// `git check-ignore` is ~8 of session-start's ~10 ms, so its answer is cached

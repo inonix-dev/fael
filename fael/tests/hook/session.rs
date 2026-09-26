@@ -180,17 +180,55 @@ fn session_start_lists_to_me_above_the_count() {
     assert!(ok, "{err}");
     let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
     assert!(ok, "{out}");
-    // mine in full with the suffix, above a count that covers only the rest
+    // mine in full with the suffix, above a count that covers every open issue
     assert!(out.contains("answer me (to: hook-test)"), "{out}");
     assert!(!out.contains("answer them"), "{out}");
     assert!(!out.contains("answer anyone"), "{out}");
     assert!(
-        out.contains("2 more open issues — fael find --kind issue"),
+        out.contains("1 to you (0 urgent) · 3 open issues — fael find --kind issue"),
         "{out}"
     );
     let (mine, count) = (
         out.find("answer me").unwrap(),
-        out.find("more open issues").unwrap(),
+        out.find("3 open issues").unwrap(),
     );
     assert!(mine < count, "{out}");
+}
+
+#[test]
+fn session_start_lists_mine_then_hot_urgent() {
+    let d = repo();
+    std::fs::write(d.join("src/a.rs"), "// a\n").unwrap();
+    let input = format!(r#"{{"cwd":{}}}"#, json(&d));
+    // the test repo's writer is Hook Test (hook-test-…): mixed case routes to it
+    let add = |text: &str, extra: &[&str]| {
+        let mut args = vec!["add", "issue", text, "--files", "src/a.rs"];
+        args.extend(extra);
+        let (ok, _, err) = fael(&d, &args, "");
+        assert!(ok, "{err}");
+    };
+    add("mine plain", &["--to", "hook-test"]);
+    add("hot unowned", &["--urgent"]);
+    add("theirs urgent", &["--to", "someone", "--urgent"]);
+    add("theirs plain", &["--to", "someone"]);
+    add("anyone plain", &[]);
+    let (ok, out, _) = fael(&d, &["hook", "session-start", "--client", "claude"], &input);
+    assert!(ok, "{out}");
+    // mine (even plain) and hot urgent list in full; routed and plain rest count only
+    assert!(out.contains("mine plain (to: hook-test)"), "{out}");
+    assert!(out.contains("hot unowned (urgent 1)"), "{out}");
+    assert!(!out.contains("theirs urgent"), "{out}");
+    assert!(!out.contains("theirs plain"), "{out}");
+    assert!(!out.contains("anyone plain"), "{out}");
+    assert!(
+        out.contains("1 to you (0 urgent) · 1 urgent unassigned · 5 open issues — fael find --kind issue"),
+        "{out}"
+    );
+    // routing first, then urgency: mine above hot above the count line
+    let (mine, hot, count) = (
+        out.find("mine plain").unwrap(),
+        out.find("hot unowned").unwrap(),
+        out.find("5 open issues").unwrap(),
+    );
+    assert!(mine < hot && hot < count, "{out}");
 }

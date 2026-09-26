@@ -31,10 +31,11 @@ pub use doctor::{
 pub use hook::{StopFacts, decide_stop, last_row_ms};
 
 pub use id::{now_ms, rfc3339, to_matches, ts_ms, ulid, ulid_at, writer_id};
-pub use log::{Log, MONTH_MAX, add, add_row, append, close, close_row, mv_row, parse, read};
+pub use log::{Log, MONTH_MAX, add, add_row, append, bump_row, close, close_row, mv_row, parse, read};
 pub use query::{
-    Filter, KeyUse, abbrev, brief, closed, est_tokens, find, glob, gone, keys, kickoff, push,
-    query, render, resolve, superseded, warnings,
+    Filter, KeyUse, Urgent, UrgentChange, abbrev, brief, closed, cmp_rows, est_tokens, find,
+    fresh_ts, glob, gone, keys, kickoff, push, query, ranked, render, resolve, resolve_urgent,
+    superseded, warnings,
 };
 pub use row::{Row, Stamp};
 pub use validate::{normalize_files, valid_key, validate, validate_alias, validate_close};

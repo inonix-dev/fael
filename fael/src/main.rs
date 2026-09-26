@@ -16,10 +16,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage:
-  fael add <kind> \"<text>\" [--files a,b] [--key k] [--to who] [--supersedes id] [--force]
+  fael add <kind> \"<text>\" [--files a,b] [--key k] [--to who] [--urgent|--urgent-before id] [--supersedes id] [--force]
       (no --files = the files this session edited, as the edit hook recorded;
        --force files a path that looks like a typo of an existing one)
   fael close <id> \"<why>\"
+  fael bump <id> [--to who] [--urgent|--urgent-before id|--not-urgent]
+      (same text/files, new version — text and files never change through bump)
   fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--to who] [--all]
   fael keys [glob]
   fael kickoff [file|anchor]
@@ -62,6 +64,7 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
     match (cmd, rest) {
         ("add", [kind, text]) => add(&a, kind, text).map(|()| ExitCode::SUCCESS),
         ("close", [id, why]) => close(&a, id, why).map(|()| ExitCode::SUCCESS),
+        ("bump", [id]) => bump(&a, id).map(|()| ExitCode::SUCCESS),
         ("find", [] | [_]) => find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("keys", [] | [_]) => keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
@@ -105,11 +108,12 @@ impl Args {
                 None => (name.to_string(), None),
             };
             match name.as_str() {
-                "all" | "force" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune" => {
+                "all" | "force" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune"
+                | "urgent" | "not-urgent" => {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
-                | "before" | "map" | "to" => {
+                | "before" | "map" | "to" | "urgent-before" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -261,6 +265,14 @@ fn written(a: &Args, r: &Repo, row: &Row, path: &Path) {
 
 fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
     let r = repo()?;
+    let urgent = match (a.has("urgent"), a.one("urgent-before")) {
+        (false, None) => core::Urgent::Unset,
+        (true, None) => core::Urgent::End,
+        (false, Some(t)) => core::Urgent::Before(t),
+        (true, Some(_)) => {
+            return Err("rejected: --urgent and --urgent-before pick one — the queue takes a single position".into());
+        }
+    };
     let (row, path, warns) = write::add_row(
         &r,
         kind,
@@ -269,6 +281,7 @@ fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
         write::AddOpts {
             key: a.one("key"),
             to: a.one("to"),
+            urgent,
             supersedes: a.one("supersedes"),
             force: a.has("force"),
         },
@@ -288,6 +301,15 @@ fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
 
 fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>), String> {
     core::close_row(&r.fael, &read(r), &r.cfg, &stamp(r), id, why)
+}
+
+/// `fael bump` — same text/files, new `to`/`urgent` (see write::bump).
+fn bump(a: &Args, id: &str) -> Result<(), String> {
+    let r = repo()?;
+    let (row, path, warns) = write::bump(&r, a, id)?;
+    warns.iter().for_each(|w| eprintln!("{w}"));
+    written(a, &r, &row, &path);
+    Ok(())
 }
 
 /// Record that `old` moved to `new` — for what git can't see (anchors,

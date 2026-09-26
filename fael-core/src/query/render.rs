@@ -45,13 +45,19 @@ pub fn render(log: &Log, rows: &[&Row], budget: usize) -> String {
             ""
         };
         let key = r.key.as_ref().map(|k| format!(" #{k}")).unwrap_or_default();
-        let to = r
-            .to_who()
-            .map(|t| format!(" (to: {t})"))
-            .unwrap_or_default();
+        // `(urgent 1, to: ploy)` — whichever of the two is set, urgent first
+        let route = match (
+            r.urgent_value().map(|u| format!("urgent {u}")),
+            r.to_who(),
+        ) {
+            (Some(u), Some(t)) => format!(" ({u}, to: {t})"),
+            (Some(u), None) => format!(" ({u})"),
+            (None, Some(t)) => format!(" (to: {t})"),
+            (None, None) => String::new(),
+        };
         let text = r.text.split_whitespace().collect::<Vec<_>>().join(" ");
         let line = format!(
-            "- [{id}] {}{mark}{key} {text}{to} → {}\n",
+            "- [{id}] {}{mark}{key} {text}{route} → {}\n",
             r.kind,
             r.files.join(", ")
         );

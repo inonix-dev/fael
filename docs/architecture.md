@@ -98,12 +98,13 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 
 | Command | What it does |
 |---|---|
-| `fael add <kind> "<text>" --files a,b [--key k] [--to who] [--supersedes id]` | append a row |
+| `fael add <kind> "<text>" --files a,b [--key k] [--to who] [--urgent\|--urgent-before id] [--supersedes id]` | append a row |
 | `fael close <id> "<why>"` | append a close row |
+| `fael bump <id> [--to who] [--urgent\|--urgent-before id\|--not-urgent]` | new version of an open row: same text/files, new `to`/`urgent`, superseding the old one |
 | `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--to who] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
 | `fael mv <old> <new>` | record a move git can't see — an anchor, an uncommitted rewrite, or one file split into several (one old path may point at many new ones). Adds matches only, never hides a row |
-| `fael kickoff [anchor]` | the session brief: open issues, then the rest by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
+| `fael kickoff [anchor]` | the session brief: urgent first, then issues, decisions, notes by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
 | `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |

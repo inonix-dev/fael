@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub(crate) struct AddOpts {
     pub key: Option<String>,
     pub to: Option<String>,
+    pub urgent: core::Urgent,
     pub supersedes: Option<String>,
     pub force: bool,
 }
@@ -33,6 +34,7 @@ pub(crate) fn add_row(
     let AddOpts {
         key,
         to,
+        urgent,
         supersedes,
         force,
     } = opts;
@@ -55,10 +57,50 @@ pub(crate) fn add_row(
     row.to = to
         .map(|t| t.trim().to_lowercase())
         .filter(|t| !t.is_empty());
+    // the queue position resolves against the open issues (`--urgent` = back,
+    // `--urgent-before` = just above that row); core rejects non-issues
+    row.urgent = core::resolve_urgent(&log, &urgent)?;
     let (row, path, mut core_warns) =
         core::add_row(&r.fael, &log, &r.cfg, &st, row, supersedes.as_deref())?;
     warns.append(&mut core_warns);
     Ok((row, path, warns))
+}
+
+/// `fael bump <id>` — change routing/urgency as a new version: same
+/// kind/text/files/key, new `to`/`urgent`, superseding the old row. At most
+/// one of `--urgent` (back of the queue), `--urgent-before <id>` (just above
+/// that row), `--not-urgent` (leave the queue); none keeps the old number.
+pub(crate) fn bump(
+    r: &crate::Repo,
+    a: &crate::Args,
+    id: &str,
+) -> Result<(core::Row, PathBuf, Vec<String>), String> {
+    let urgent = match (
+        a.has("urgent"),
+        a.one("urgent-before"),
+        a.has("not-urgent"),
+    ) {
+        (false, None, false) => core::UrgentChange::Keep,
+        (true, None, false) => core::UrgentChange::End,
+        (false, Some(t), false) => core::UrgentChange::Before(t),
+        (false, None, true) => core::UrgentChange::Remove,
+        _ => {
+            return Err(
+                "rejected: bump takes at most one of --urgent, --urgent-before, --not-urgent"
+                    .into(),
+            );
+        }
+    };
+    let log = crate::read(r);
+    core::bump_row(
+        &r.fael,
+        &log,
+        &r.cfg,
+        &crate::stamp(r),
+        id,
+        a.one("to"),
+        urgent,
+    )
 }
 
 /// A session stays usable for deriving files while its edit file was written
