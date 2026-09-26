@@ -16,10 +16,13 @@ goes to the next one. Rows live in `.fael/log/` and travel with the repo.
 - `fael add decision "<what was chosen, and why>" --files a,b` — something agreed that git and code do not say
 - `fael add note "<state the next session needs>" --files a,b` — where work stopped, what is half-done
 - `fael close <id> "fixed in <sha>"` — an issue that is fixed, a note that is done
+- Long body? `--title "<≤15-word headline>"` — lists show the title, the body is pulled by id (`fael find <id>`)
 
 Each row is read months later with no chat: one or two standalone sentences.
 `--files` is required — name the paths (or anchors like `doc:pricing`) it is about;
 reuse one `fael find` already showed instead of inventing a new one.
+Planning work? `--files plan:<name>` (e.g. `plan:fael-direction`) — `fael kickoff PLAN-<name>.md`
+pulls it back; one markdown file never pushes rows filed against another.
 With the MCP server connected, the tools `find` / `add` / `close` do the same.
 
 The Stop hook will not let a turn end that edited files with no row after the

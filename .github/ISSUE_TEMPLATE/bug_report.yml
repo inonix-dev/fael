@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in fael is broken or behaves wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. fael add issue "..." --files src/x.rs
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output / logs
+      description: Command output, hook output, or the relevant `.fael/log/` rows.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: fael version
+      description: Output of `fael --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Agent client
+      multiple: true
+      options: [Claude Code, Codex, OpenCode, CLI only, Other]
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15 / Ubuntu 24.04 / Windows 11

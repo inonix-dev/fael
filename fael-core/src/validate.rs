@@ -24,6 +24,22 @@ pub fn validate(row: &Row, cfg: &Config) -> Result<(), String> {
     if let Some(k) = &row.key {
         valid_key(k)?;
     }
+    if let Some(t) = row.to_who()
+        && t.trim().is_empty()
+    {
+        return Err("rejected: to is empty — name who has to answer, e.g. --to ploy".into());
+    }
+    if row.title.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        return Err("rejected: title is empty — drop --title or name the headline".into());
+    }
+    if row.kind != "issue" && row.urgent_value().is_some() {
+        return Err(
+            "rejected: urgent is for issues — file it as kind issue or drop --urgent".into(),
+        );
+    }
+    if row.urgent.is_some_and(|u| !u.is_finite()) {
+        return Err("rejected: urgent must be a finite number".into());
+    }
     check_common(row, cfg)
 }
 

@@ -98,12 +98,13 @@ A standard-compliant MCP host needs no adapter — `fael mcp` is the whole integ
 
 | Command | What it does |
 |---|---|
-| `fael add <kind> "<text>" --files a,b [--key k] [--supersedes id]` | append a row |
+| `fael add <kind> "<text>" --files a,b [--key k] [--title t] [--to who] [--urgent\|--urgent-before id] [--supersedes id]` | append a row (`--title` = the ≤15-word headline lists show) |
 | `fael close <id> "<why>"` | append a close row |
-| `fael find [text] [--files …] [--key glob] [--kind …] [--since …] [--all] [--branches]` | query; closed and superseded rows are hidden unless `--all` |
+| `fael bump <id> [--to who] [--urgent\|--urgent-before id\|--not-urgent]` | new version of an open row: same text/files, new `to`/`urgent`, superseding the old one |
+| `fael find [text\|id] [--files …] [--key glob] [--kind …] [--since …] [--to who] [--all] [--full] [--limit N] [--offset M]` | query; closed and superseded rows are hidden unless `--all`; lists show titles, `<id>`/`--full` show bodies; a cut list prints the exact next call (`--offset M`) |
 | `fael keys [glob]` | list keys, with a count and last use for each — to reuse a key that already exists |
 | `fael mv <old> <new>` | record a move git can't see — an anchor, an uncommitted rewrite, or one file split into several (one old path may point at many new ones). Adds matches only, never hides a row |
-| `fael kickoff [anchor]` | the session brief: open issues, then the rest by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
+| `fael kickoff [anchor] [--full] [--limit N] [--offset M]` | the session brief: urgent first, then issues, decisions, notes by freshness (newer of the row and its files' last change); rows whose files are all gone are left out |
 | `fael hook <event> [--client c]` | hook entry point (see below) |
 | `fael mcp` | MCP server on stdio |
 | `fael install [--client c] [--dry-run] [--replace-fapony]` | detect installed clients and wire MCP, hooks and skill into each one; `--replace-fapony` takes out fapony's Stop/session-start hooks and MCP (opt-in: they are user scope and still serve repos without `.fael/`) |
@@ -127,6 +128,7 @@ resolve = true                # follow renames (git log -M + fael mv rows); fals
 kickoff_tokens = 800          # kickoff, and find with no filter
 find_tokens = 800
 push_tokens = 800             # read/edit hook push
+session_decisions = 0         # session-start lists this many freshest open decisions above the count line
 [warn]
 row_tokens = 400
 [limit]
@@ -137,8 +139,8 @@ row_bytes = 10240             # hard cap, never above 10 KiB
 
 | Tool | Input | Notes |
 |---|---|---|
-| `find` | `files[]` `text` `key` `kind` `since` `limit` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool |
-| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
+| `find` | `files[]` `text` `key` `kind` `since` `to` `limit` `offset` | read-only, cut to `budget.find_tokens`. No filter = the session brief (what `kickoff` shows) — so there is no `kickoff` tool. A cut list prints `next: offset=N` — repeat the call with it |
+| `add` | `kind` `text` `files[]` (required, non-empty) `key?` `to?` `supersedes?` | a bad value is rejected with an error message that says how to fix the call. Its description tells the agent to reuse an anchor `find` already showed rather than invent a new one |
 | `close` | `id` `text` | |
 
 ### Hook protocol
@@ -192,7 +194,7 @@ Edits, not commits, are the primary signal: many agents are told never to commit
 
 **Session start:**
 ```
-client ─(session-start)─▶ core.kickoff ─▶ open issues · recent decisions · N rows on unmerged branches ─▶ context
+client ─(session-start)─▶ open issues to you in full · N freshest open decisions (opt-in) · count line for the rest ─▶ context
 ```
 
 **Across branches** (one branch per person or per agent):

@@ -113,6 +113,21 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+/// Does an issue `to` value route to `reader` (a writer id)? Match = the
+/// full writer id or its name part (before the last `-<hash>`); no prefix
+/// match (`dela` never matches `delamind-d88f`). Case-insensitive — write
+/// lowercases already, this covers hand-written rows.
+pub fn to_matches(to: &str, reader: &str) -> bool {
+    if to.is_empty() || reader.is_empty() {
+        return false;
+    }
+    let (to, reader) = (to.to_lowercase(), reader.to_lowercase());
+    if to == reader {
+        return true;
+    }
+    reader.rsplit_once('-').is_some_and(|(name, _)| to == name)
+}
+
 /// `<slug of name>-<4 hex of sha256(lowercase email)>`; no email → hash `host` instead.
 /// The email itself never reaches the repo — only the hash.
 pub fn writer_id(name: &str, email: Option<&str>, host: &str) -> String {

@@ -4,25 +4,31 @@
 //! add/close/find over stdio (see mcp.rs).
 
 mod aliases;
+mod find;
 mod hook;
 mod install;
 mod maintain;
 mod mcp;
 mod write;
 
-use fael_core::{self as core, Config, Filter, Log, Row};
+use fael_core::{self as core, Config, Log, Row};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage:
-  fael add <kind> \"<text>\" [--files a,b] [--key k] [--supersedes id] [--force]
+  fael add <kind> \"<text>\" [--files a,b] [--key k] [--title t] [--to who] [--urgent|--urgent-before id] [--supersedes id] [--force]
       (no --files = the files this session edited, as the edit hook recorded;
+       --title = the ≤15-word headline lists show, the body is pulled by id;
        --force files a path that looks like a typo of an existing one)
   fael close <id> \"<why>\"
-  fael find [text] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--all]
+  fael bump <id> [--to who] [--urgent|--urgent-before id|--not-urgent]
+      (same text/files, new version — text and files never change through bump)
+  fael find [text|id] [--files a,b] [--key glob] [--kind k] [--since yyyy-mm[-dd]] [--by writer] [--to who] [--all] [--full] [--limit N] [--offset M]
+      (an exact id or unique prefix pulls that row's body; --full shows every body;
+       a cut list prints the exact next call — rerun it with the new --offset)
   fael keys [glob]
-  fael kickoff [file|anchor]
+  fael kickoff [file|anchor] [--full] [--limit N] [--offset M]
   fael mv <old> <new>           record a move git can't see (anchors, uncommitted rewrites)
   fael hook <stop|session-start|read|edit> [--client c]   stdin in, stdout out; always exits 0
   fael stats                  tokens fael has put into context, per machine
@@ -62,9 +68,10 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
     match (cmd, rest) {
         ("add", [kind, text]) => add(&a, kind, text).map(|()| ExitCode::SUCCESS),
         ("close", [id, why]) => close(&a, id, why).map(|()| ExitCode::SUCCESS),
-        ("find", [] | [_]) => find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
-        ("keys", [] | [_]) => keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
-        ("kickoff", [] | [_]) => kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("bump", [id]) => bump(&a, id).map(|()| ExitCode::SUCCESS),
+        ("find", [] | [_]) => find::find(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("keys", [] | [_]) => find::keys(&a, rest.first()).map(|()| ExitCode::SUCCESS),
+        ("kickoff", [] | [_]) => find::kickoff(&a, rest.first()).map(|()| ExitCode::SUCCESS),
         ("mv", [old, new]) => mv(&a, old, new).map(|()| ExitCode::SUCCESS),
         ("hook", [event]) => Ok(hook::cmd(event, a.one("client"))),
         ("stats", []) => hook::stats(a.has("json")).map(|()| ExitCode::SUCCESS),
@@ -79,7 +86,7 @@ fn run(argv: Vec<String>) -> Result<ExitCode, String> {
 }
 
 /// Positionals + `--flag value` / `--flag=value`; `--` ends flags.
-struct Args {
+pub(crate) struct Args {
     pos: Vec<String>,
     flags: HashMap<String, Vec<String>>,
 }
@@ -105,11 +112,12 @@ impl Args {
                 None => (name.to_string(), None),
             };
             match name.as_str() {
-                "all" | "force" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune" => {
+                "all" | "force" | "json" | "dry-run" | "replace-fapony" | "fix" | "prune"
+                | "urgent" | "not-urgent" | "full" => {
                     a.flags.entry(name).or_default();
                 }
                 "files" | "key" | "supersedes" | "kind" | "since" | "by" | "client" | "writer"
-                | "before" | "map" => {
+                | "before" | "map" | "to" | "title" | "urgent-before" | "limit" | "offset" => {
                     let v = inline
                         .or_else(|| it.next())
                         .ok_or(format!("--{name} needs a value"))?;
@@ -121,11 +129,11 @@ impl Args {
         Ok(a)
     }
 
-    fn has(&self, f: &str) -> bool {
+    pub(crate) fn has(&self, f: &str) -> bool {
         self.flags.contains_key(f)
     }
 
-    fn one(&self, f: &str) -> Option<String> {
+    pub(crate) fn one(&self, f: &str) -> Option<String> {
         self.flags.get(f).and_then(|v| v.last()).cloned()
     }
 
@@ -135,7 +143,7 @@ impl Args {
     }
 
     /// `--files a,b --files c` → [a, b, c]
-    fn files(&self) -> Vec<String> {
+    pub(crate) fn files(&self) -> Vec<String> {
         self.flags
             .get("files")
             .into_iter()
@@ -145,6 +153,71 @@ impl Args {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect()
+    }
+
+    /// `--limit N` / `--offset M` for pull paging (chunk 5): at most N ranked
+    /// rows, skipping M first. Offset without limit pages budget cuts too.
+    pub(crate) fn paging(&self) -> Result<(Option<usize>, usize), String> {
+        let num = |f: &str| match self.one(f) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("rejected: --{f} needs a number — got {v:?}")),
+        };
+        let limit = num("limit")?;
+        if limit == Some(0) {
+            return Err("rejected: --limit 0 shows nothing — drop it or give 1 or more".into());
+        }
+        Ok((limit, num("offset")?.unwrap_or(0)))
+    }
+
+    /// Rebuild this `find`/`kickoff` call for the cut line: the same filters,
+    /// so the agent reruns it with the new `--offset` the renderer appends.
+    /// Kickoff takes no filter flags, only `--full` and `--limit`.
+    pub(crate) fn page_base(
+        &self,
+        cmd: &str,
+        positional: Option<&str>,
+        limit: Option<usize>,
+    ) -> String {
+        let mut s = format!("fael {cmd}");
+        if let Some(p) = positional.filter(|p| !p.is_empty()) {
+            s.push_str(&format!(" {}", quoted(p)));
+        }
+        if cmd == "find" {
+            let fs = self.files();
+            if !fs.is_empty() {
+                s.push_str(&format!(" --files {}", quoted(&fs.join(","))));
+            }
+            for f in ["key", "kind", "since", "by", "to"] {
+                if let Some(v) = self.one(f) {
+                    s.push_str(&format!(" --{f} {}", quoted(&v)));
+                }
+            }
+            if self.has("all") {
+                s.push_str(" --all");
+            }
+        }
+        if self.has("full") {
+            s.push_str(" --full");
+        }
+        if let Some(n) = limit {
+            s.push_str(&format!(" --limit {n}"));
+        }
+        s
+    }
+}
+
+/// Quote only when the shell would need it — `--kind issue` stays bare, a
+/// glob (`--key auth:*`) or `$x` is single-quoted so the shell passes it as-is.
+fn quoted(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || "-_./:,@+=".contains(c))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
     }
 }
 
@@ -227,7 +300,8 @@ pub(crate) fn read(r: &Repo) -> Log {
 }
 
 /// Writer id from git identity; no email → hostname hash, with a warning.
-fn writer(r: &Repo) -> String {
+/// `pub(crate)` — the session-start hook matches `--to` against it.
+pub(crate) fn writer(r: &Repo) -> String {
     let name = git(&r.root, &["config", "user.name"]).unwrap_or_default();
     let email = git(&r.root, &["config", "user.email"]);
     let host = Command::new("hostname")
@@ -260,14 +334,27 @@ fn written(a: &Args, r: &Repo, row: &Row, path: &Path) {
 
 fn add(a: &Args, kind: &str, text: &str) -> Result<(), String> {
     let r = repo()?;
+    let urgent = match (a.has("urgent"), a.one("urgent-before")) {
+        (false, None) => core::Urgent::Unset,
+        (true, None) => core::Urgent::End,
+        (false, Some(t)) => core::Urgent::Before(t),
+        (true, Some(_)) => {
+            return Err("rejected: --urgent and --urgent-before pick one — the queue takes a single position".into());
+        }
+    };
     let (row, path, warns) = write::add_row(
         &r,
         kind,
         text,
         &a.files(),
-        a.one("key"),
-        a.one("supersedes"),
-        a.has("force"),
+        write::AddOpts {
+            key: a.one("key"),
+            to: a.one("to"),
+            title: a.one("title"),
+            urgent,
+            supersedes: a.one("supersedes"),
+            force: a.has("force"),
+        },
     )?;
     warns.iter().for_each(|w| eprintln!("{w}"));
     written(a, &r, &row, &path);
@@ -284,6 +371,15 @@ fn close(a: &Args, id: &str, why: &str) -> Result<(), String> {
 
 fn close_row(r: &Repo, id: &str, why: &str) -> Result<(Row, PathBuf, Vec<String>), String> {
     core::close_row(&r.fael, &read(r), &r.cfg, &stamp(r), id, why)
+}
+
+/// `fael bump` — same text/files, new `to`/`urgent` (see write::bump).
+fn bump(a: &Args, id: &str) -> Result<(), String> {
+    let r = repo()?;
+    let (row, path, warns) = write::bump(&r, a, id)?;
+    warns.iter().for_each(|w| eprintln!("{w}"));
+    written(a, &r, &row, &path);
+    Ok(())
 }
 
 /// Record that `old` moved to `new` — for what git can't see (anchors,
@@ -309,85 +405,6 @@ fn mv(a: &Args, old: &str, new: &str) -> Result<(), String> {
         println!("{}", row.to_line());
     } else {
         println!("{} → {from} → {to}", row.id);
-    }
-    Ok(())
-}
-
-fn find(a: &Args, text: Option<&String>) -> Result<(), String> {
-    let r = repo()?;
-    let files = core::normalize_files(&a.files(), &r.cwd, &r.root)?;
-    let log = read(&r);
-    let f = Filter {
-        text: text.cloned(),
-        files: aliases::load(&r, &log, true).expand_all(&files),
-        key: a.one("key"),
-        kind: a.one("kind"),
-        since: a.one("since"),
-        by: a.one("by"),
-        all: a.has("all"),
-    };
-    let (rows, budget) = core::query(&log, &f, &r.cfg);
-    show(a, &log, &rows, budget)?;
-    // --all in JSON: also the close rows naming a shown row, so a consumer can tell closed from open
-    if a.has("json") && f.all {
-        let shown: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        log.closes
-            .iter()
-            .filter(|c| c.reference.as_deref().is_some_and(|id| shown.contains(id)))
-            .for_each(|c| println!("{}", c.to_line()));
-    }
-    Ok(())
-}
-
-fn kickoff(a: &Args, anchor: Option<&String>) -> Result<(), String> {
-    let r = repo()?;
-    let files = core::normalize_files(&Vec::from_iter(anchor.cloned()), &r.cwd, &r.root)?;
-    let log = read(&r);
-    let al = aliases::load(&r, &log, true);
-    let f = Filter {
-        files: al.expand_all(&files),
-        ..Filter::default()
-    };
-    show(
-        a,
-        &log,
-        &core::kickoff(&log, &f, &r.root, &al),
-        r.cfg.kickoff_tokens,
-    )
-}
-
-fn show(a: &Args, log: &Log, rows: &[&Row], budget: usize) -> Result<(), String> {
-    if rows.is_empty() {
-        eprintln!("fael: no rows match");
-    } else if a.has("json") {
-        rows.iter().for_each(|r| println!("{}", r.to_line()));
-    } else {
-        print!("{}", core::render(log, rows, budget));
-    }
-    Ok(())
-}
-
-fn keys(a: &Args, pattern: Option<&String>) -> Result<(), String> {
-    let r = repo()?;
-    let log = read(&r);
-    let ks = core::keys(&log, pattern.map(String::as_str));
-    if ks.is_empty() {
-        eprintln!("fael: no keys yet");
-    }
-    for k in ks {
-        if a.has("json") {
-            println!(
-                "{}",
-                serde_json::json!({"key": k.key, "count": k.count, "last": k.last})
-            );
-        } else {
-            println!(
-                "- {} ×{} (last {})",
-                k.key,
-                k.count,
-                k.last.get(..10).unwrap_or(&k.last)
-            );
-        }
     }
     Ok(())
 }

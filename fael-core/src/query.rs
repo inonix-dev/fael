@@ -13,8 +13,11 @@ mod select;
 
 pub use lookup::{KeyUse, keys, query, resolve, warnings};
 pub use matching::glob;
-pub use render::{abbrev, est_tokens, render};
-pub use select::{brief, closed, find, gone, kickoff, push, superseded};
+pub use render::{Cut, abbrev, est_tokens, render, render_full, render_full_page, render_page};
+pub use select::{
+    Urgent, UrgentChange, brief, closed, cmp_rows, find, fresh_ts, gone, kickoff, page, push,
+    ranked, resolve_urgent, superseded,
+};
 
 /// What `find` narrows by. Every field is optional; `files` holds normalised refs.
 #[derive(Debug, Default, Clone)]
@@ -29,12 +32,21 @@ pub struct Filter {
     /// lower bound on `ts`, as a prefix: `2026-09` or `2026-09-20`
     pub since: Option<String>,
     pub by: Option<String>,
+    /// who the row routes to (`issue --to <who>`) — lowercased, matched like
+    /// session start (`to_matches`): a full writer id or its name part, either way
+    pub to: Option<String>,
     /// show closed and superseded rows too
     pub all: bool,
+    /// Postgres-style paging, applied after ranking before render
+    /// (`page()`): at most this many rows …
+    pub limit: Option<usize>,
+    /// … skipping this many ranked rows first
+    pub offset: usize,
 }
 
 impl Filter {
     /// No narrowing at all — `find` then answers with the session brief.
+    /// Paging is not narrowing: `find --limit 2` still briefs, just shorter.
     pub fn is_empty(&self) -> bool {
         self.text.is_none()
             && self.files.is_empty()
@@ -42,5 +54,6 @@ impl Filter {
             && self.kind.is_none()
             && self.since.is_none()
             && self.by.is_none()
+            && self.to.is_none()
     }
 }

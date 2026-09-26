@@ -2,7 +2,8 @@
 //! Reads never fail and take no lock; appends hold `.fael/.lock` and write one whole line.
 
 use crate::{
-    Config, Row, Stamp, closed, resolve, validate, validate_alias, validate_close, warnings,
+    Config, Row, Stamp, Urgent, UrgentChange, closed, resolve, resolve_urgent, superseded,
+    validate, validate_alias, validate_close, warnings,
 };
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -204,6 +205,56 @@ pub fn add_row(
     Ok((row, path, warns))
 }
 
+/// Change routing/urgency on an open row as a new version (MVCC-style): the
+/// same kind, title, text, files and key, new `to`/`urgent`, superseding the old row
+/// — the one add path every adapter (CLI, MCP, a server) goes through, so the
+/// old version hides through `superseded()` with no new visibility rule.
+/// `to`: `None` keeps the old value, `Some("")` clears it, anything else sets
+/// it (lowercased — everything identity-like is). Text and files never change
+/// through bump — file a new row for new content.
+pub fn bump_row(
+    fael: &Path,
+    log: &Log,
+    cfg: &Config,
+    stamp: &Stamp,
+    id: &str,
+    to: Option<String>,
+    urgent: UrgentChange,
+) -> Result<(Row, PathBuf, Vec<String>), String> {
+    let old = resolve(log, id)?.clone();
+    if closed(log).contains(old.id.as_str()) {
+        return Err(format!(
+            "rejected: {} is already closed — bump an open row",
+            old.id
+        ));
+    }
+    if superseded(log).contains(old.id.as_str()) {
+        return Err(format!(
+            "rejected: {} is already superseded — bump the newer version",
+            old.id
+        ));
+    }
+    let to = match to {
+        None => old.to.clone(),
+        Some(t) => {
+            let t = t.trim().to_lowercase();
+            (!t.is_empty()).then_some(t)
+        }
+    };
+    let urgent = match urgent {
+        UrgentChange::Keep => old.urgent,
+        UrgentChange::End => resolve_urgent(log, &Urgent::End)?,
+        UrgentChange::Before(t) => resolve_urgent(log, &Urgent::Before(t))?,
+        UrgentChange::Remove => None,
+    };
+    let mut row = Row::new(&stamp.by, &old.kind, &old.text, old.files.clone());
+    row.key = old.key.clone();
+    row.title = old.title.clone();
+    row.to = to;
+    row.urgent = urgent;
+    add_row(fael, log, cfg, stamp, row, Some(&old.id))
+}
+
 /// Resolve `id`, stamp, validate, append a close row. A row already closed is rejected.
 pub fn close_row(
     fael: &Path,
@@ -217,6 +268,22 @@ pub fn close_row(
     // a second close row adds nothing but noise to an append-only log
     if closed(log).contains(target.id.as_str()) {
         return Err(format!("rejected: {} is already closed", target.id));
+    }
+    // bump makes id churn routine: closing the hidden old version would leave
+    // the live one open, so point at the newest version instead
+    if superseded(log).contains(target.id.as_str()) {
+        let mut newest = target.id.as_str();
+        while let Some(n) = log
+            .rows
+            .iter()
+            .find(|r| r.supersedes.as_deref() == Some(newest))
+        {
+            newest = &n.id;
+        }
+        return Err(format!(
+            "rejected: {} is superseded — close the newest version {newest}",
+            target.id
+        ));
     }
     let warns = vec![];
     let mut row = Row::close(&stamp.by, &target.id, why);

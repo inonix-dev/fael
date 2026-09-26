@@ -70,12 +70,16 @@ pub fn keys(log: &Log, pattern: Option<&str>) -> Vec<KeyUse> {
 }
 
 /// No filter = the session brief under the kickoff budget; otherwise find under the find budget.
-pub fn query<'a>(log: &'a Log, f: &Filter, cfg: &Config) -> (Vec<&'a Row>, usize) {
-    if f.is_empty() && !f.all {
+/// Either way the ranked list is paged (`Filter::limit`/`offset`) before it
+/// reaches render — the token budget stays the hard cap, whichever hits first.
+pub fn query<'a>(log: &'a Log, f: &Filter, cfg: &Config) -> (Vec<&'a Row>, usize, usize) {
+    let (rows, budget) = if f.is_empty() && !f.all {
         (super::brief(log, f), cfg.kickoff_tokens)
     } else {
         (super::find(log, f), cfg.find_tokens)
-    }
+    };
+    let (page, total) = super::page(rows, f.limit, f.offset);
+    (page, budget, total)
 }
 
 /// Warnings for a row about to be added — never a reject: a key domain the repo did not declare,
@@ -113,6 +117,22 @@ pub fn warnings(row: &Row, log: &Log, cfg: &Config) -> Vec<String> {
             "warning: text is ~{t} tokens (warn at {}) — every push of this row costs that",
             cfg.warn_row_tokens
         ));
+    }
+    // lists show the title, bodies are pulled by id — a long untitled row
+    // costs its full text on every push
+    let words = row.text.split_whitespace().count();
+    if words > 60 && row.title.as_deref().is_none_or(|t| t.trim().is_empty()) {
+        w.push(format!(
+            "warning: text is {words} words with no title — add --title \"<≤15-word headline>\" so lists stay skimmable"
+        ));
+    }
+    if let Some(t) = row.title.as_deref() {
+        let n = t.split_whitespace().count();
+        if n > 15 {
+            w.push(format!(
+                "warning: title is {n} words (aim ≤ 15) — lists show it in full on every push"
+            ));
+        }
     }
     w
 }

@@ -1,9 +1,9 @@
-//! `fael mcp` — MCP over stdio: newline-delimited JSON-RPC 2.0, three tools (find · add · close).
+//! `fael mcp` — MCP over stdio: newline-delimited JSON-RPC 2.0, four tools (find · add · close · bump).
 //! Blocking std I/O, one request at a time — no async runtime on this path (PLAN §4).
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
 
-use crate::{Filter, aliases, close_row, core, read, repo, write::add_row};
+use crate::{aliases, close_row, core, read, repo, write::AddOpts, write::add_row};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -58,7 +58,10 @@ fn call(p: &Value) -> Value {
         "find" => find(args),
         "add" => add(args),
         "close" => close(args),
-        n => Err(format!("unknown tool {n} — fael has find, add, close")),
+        "bump" => bump(args),
+        n => Err(format!(
+            "unknown tool {n} — fael has find, add, close, bump"
+        )),
     };
     let (text, is_error) = match res {
         Ok(t) => (t, false),
@@ -87,24 +90,44 @@ fn files(a: &Value) -> Vec<String> {
 
 fn find(a: &Value) -> Result<String, String> {
     let r = repo()?;
-    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
     let log = read(&r);
-    let f = Filter {
+    // `find {"id": ...}` pulls that row's body by exact id or unique prefix —
+    // lists show titles, this is how the body is read on demand
+    if let Some(id) = s(a, "id") {
+        let row = core::resolve(&log, &id)?;
+        return Ok(core::render_full(&log, &[row], 10_000));
+    }
+    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
+    let f = core::Filter {
         text: s(a, "text"),
         files: aliases::load(&r, &log, true).expand_all(&files),
         key: s(a, "key"),
         kind: s(a, "kind"),
         since: s(a, "since"),
-        ..Filter::default()
+        to: s(a, "to").map(|t| t.trim().to_lowercase()),
+        limit: match a["limit"].as_u64() {
+            Some(0) => {
+                return Err("rejected: limit 0 shows nothing — drop it or give 1 or more".into());
+            }
+            n => n.map(|n| n as usize),
+        },
+        offset: a["offset"].as_u64().unwrap_or(0) as usize,
+        ..core::Filter::default()
     };
-    let (mut rows, budget) = core::query(&log, &f, &r.cfg);
-    if let Some(n) = a["limit"].as_u64() {
-        rows.truncate(n as usize);
-    }
+    // same rows as the CLI: query() pages after ranking, the cut line names
+    // the next offset to repeat the call with
+    let (rows, budget, total) = core::query(&log, &f, &r.cfg);
+    let cut = core::Cut {
+        total,
+        offset: f.offset,
+        next: &|n| format!("offset={n}"),
+    };
     Ok(if rows.is_empty() {
         "no rows match".into()
+    } else if a["full"].as_bool().unwrap_or(false) {
+        core::render_full_page(&log, &rows, budget, cut)
     } else {
-        core::render(&log, &rows, budget)
+        core::render_page(&log, &rows, budget, cut)
     })
 }
 
@@ -115,9 +138,54 @@ fn add(a: &Value) -> Result<String, String> {
         &need(a, "kind")?,
         &need(a, "text")?,
         &files(a),
-        s(a, "key"),
-        s(a, "supersedes"),
-        a["force"].as_bool().unwrap_or(false),
+        AddOpts {
+            key: s(a, "key"),
+            to: s(a, "to"),
+            title: s(a, "title"),
+            urgent: urgent_ask(a)?,
+            supersedes: s(a, "supersedes"),
+            force: a["force"].as_bool().unwrap_or(false),
+        },
+    )?;
+    Ok(done(&row.id, warns))
+}
+
+/// `add --urgent` over MCP: `urgent` files at the back of the queue,
+/// `urgent_before` just above that row — one of the two at most.
+fn urgent_ask(a: &Value) -> Result<core::Urgent, String> {
+    match (
+        a["urgent"].as_bool().unwrap_or(false),
+        s(a, "urgent_before"),
+    ) {
+        (false, None) => Ok(core::Urgent::Unset),
+        (true, None) => Ok(core::Urgent::End),
+        (false, Some(t)) => Ok(core::Urgent::Before(t)),
+        (true, Some(_)) => Err("urgent and urgent_before pick one".into()),
+    }
+}
+
+fn bump(a: &Value) -> Result<String, String> {
+    let r = repo()?;
+    let log = read(&r);
+    let urgent = match (
+        a["urgent"].as_bool().unwrap_or(false),
+        s(a, "urgent_before"),
+        a["not_urgent"].as_bool().unwrap_or(false),
+    ) {
+        (false, None, false) => core::UrgentChange::Keep,
+        (true, None, false) => core::UrgentChange::End,
+        (false, Some(t), false) => core::UrgentChange::Before(t),
+        (false, None, true) => core::UrgentChange::Remove,
+        _ => return Err("urgent, urgent_before and not_urgent pick one".into()),
+    };
+    let (row, _, warns) = core::bump_row(
+        &r.fael,
+        &log,
+        &r.cfg,
+        &crate::stamp(&r),
+        &need(a, "id")?,
+        s(a, "to"),
+        urgent,
     )?;
     Ok(done(&row.id, warns))
 }
@@ -145,12 +213,16 @@ fn tools() -> Value {
     Call it at the start of a task and before touching a file. No arguments = the session brief.",
             "annotations": {"readOnlyHint": true},
             "inputSchema": {"type": "object", "properties": {
+                "id": str_("this row's body by exact id or unique prefix — lists show titles, this pulls the body"),
+                "full": {"type": "boolean", "description": "show every row's body under its title"},
                 "files": files("repo-relative paths, directories, globs, or anchors like doc:pricing — rows on any of them"),
                 "text": str_("case-insensitive substring of the row text"),
                 "key": str_("key glob, e.g. auth:*"),
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "since": str_("yyyy-mm or yyyy-mm-dd"),
-                "limit": {"type": "integer", "minimum": 1},
+                "to": str_("only rows routed to this reader, e.g. ploy"),
+                "limit": {"type": "integer", "minimum": 1, "description": "at most this many ranked rows — a cut list prints next: offset=N, repeat the call with it"},
+                "offset": {"type": "integer", "minimum": 0, "description": "skip this many ranked rows first"},
             }},
         },
         {
@@ -159,13 +231,18 @@ fn tools() -> Value {
     or state a later session needs (note). One standalone sentence or two — it is read months later with no chat. \
     files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one. \
     files may be omitted when this session edited files (the hook recorded them) — they are filled in; otherwise files is required. \
+    title is the ≤15-word headline lists show, text is the detail pulled by id — set title when text tops ~60 words. \
     Saw something broken, inconsistent or likely to break? Add it as kind issue right there — do not wait for the end of the task.",
             "inputSchema": {"type": "object", "required": ["kind", "text"], "properties": {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "text": str_("what happened and why, standalone"),
+                "title": str_("≤15-word headline lists show; the body is pulled by id — set it when text tops ~60 words"),
                 "files": {"type": "array", "items": {"type": "string"},
                     "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),
+                "to": str_("who has to answer, e.g. ploy — routed to them at their session start"),
+                "urgent": {"type": "boolean", "description": "file at the back of the urgent queue (issues only)"},
+                "urgent_before": str_("file just above this row in the urgent queue — one of urgent / urgent_before at most"),
                 "supersedes": str_("id of the row this one replaces"),
                 "force": {"type": "boolean", "description": "file a path that looks like a typo of an existing file (a file not created yet)"},
             }},
@@ -176,6 +253,17 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "required": ["id", "text"], "properties": {
                 "id": str_("row id or a unique prefix, as find shows it"),
                 "text": str_("why it is closed, e.g. fixed in <sha>"),
+            }},
+        },
+        {
+            "name": "bump",
+            "description": "Change routing/urgency on an open row as a new version: same text and files, new to/urgent, superseding the old row. Text and files never change through bump.",
+            "inputSchema": {"type": "object", "required": ["id"], "properties": {
+                "id": str_("row id or a unique prefix, as find shows it"),
+                "to": str_("who has to answer now, e.g. ploy — omit to keep"),
+                "urgent": {"type": "boolean", "description": "move to the back of the urgent queue"},
+                "urgent_before": str_("move just above this row in the urgent queue"),
+                "not_urgent": {"type": "boolean", "description": "leave the urgent queue"},
             }},
         },
     ])
