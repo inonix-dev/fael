@@ -4,7 +4,7 @@
 use super::protocol::{Event, Reply, ctx};
 use super::state::{session_key, state_dir};
 use super::usage::record_usage;
-use crate::{Filter, aliases, core, home};
+use crate::{aliases, core, home};
 use std::path::{Path, PathBuf};
 
 /// The one line that makes agents report (decision mugea7lt) — the hook only
@@ -36,9 +36,9 @@ pub(crate) fn session_start(e: &Event) -> Reply {
     let reader = crate::writer(&c.repo);
     let open: Vec<&core::Row> = core::find(
         &c.log,
-        &Filter {
+        &core::Filter {
             kind: Some("issue".into()),
-            ..Filter::default()
+            ..core::Filter::default()
         },
     );
     let t = todo(open, &reader);
@@ -47,9 +47,9 @@ pub(crate) fn session_start(e: &Event) -> Reply {
     } else {
         core::kickoff(
             &c.log,
-            &Filter {
+            &core::Filter {
                 kind: Some("decision".into()),
-                ..Filter::default()
+                ..core::Filter::default()
             },
             &c.repo.root,
             &al,

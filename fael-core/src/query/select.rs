@@ -216,9 +216,11 @@ pub fn find<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
                 && f.key
                     .as_ref()
                     .is_none_or(|g| r.key.as_deref().is_some_and(|k| glob(g, k)))
-                && text
-                    .as_ref()
-                    .is_none_or(|t| r.text.to_lowercase().contains(t))
+                && text.as_ref().is_none_or(|t| {
+                    r.text.to_lowercase().contains(t)
+                        // lists show titles, so text search finds them too
+                        || r.title.as_deref().is_some_and(|ti| ti.to_lowercase().contains(t))
+                })
                 && (files.is_empty()
                     || r.files.iter().any(|rf| {
                         let rf = lenient(rf);

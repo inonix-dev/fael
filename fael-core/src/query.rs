@@ -13,7 +13,7 @@ mod select;
 
 pub use lookup::{KeyUse, keys, query, resolve, warnings};
 pub use matching::glob;
-pub use render::{abbrev, est_tokens, render};
+pub use render::{abbrev, est_tokens, render, render_full};
 pub use select::{
     Urgent, UrgentChange, brief, closed, cmp_rows, find, fresh_ts, gone, kickoff, push, ranked,
     resolve_urgent, superseded,

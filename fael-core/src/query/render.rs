@@ -28,9 +28,21 @@ pub fn abbrev(log: &Log) -> usize {
         .max(8)
 }
 
-/// One markdown line per row — `- [id] kind #key text → files` — stopping once `budget`
+/// One markdown line per row — `- [id] kind #key title → files` — stopping once `budget`
 /// estimated tokens are used (the first row always shows). A last line counts what was cut.
+/// The line shows the title (`Row::display_title`), never the body — bodies come
+/// back via `render_full` (`find <id>`, `--full`).
 pub fn render(log: &Log, rows: &[&Row], budget: usize) -> String {
+    render_inner(log, rows, budget, false)
+}
+
+/// The same rows with bodies: each title line plus the full `text` indented
+/// below it — what `find <id>` and `--full` show (skim titles, read on demand).
+pub fn render_full(log: &Log, rows: &[&Row], budget: usize) -> String {
+    render_inner(log, rows, budget, true)
+}
+
+fn render_inner(log: &Log, rows: &[&Row], budget: usize, full: bool) -> String {
     let width = abbrev(log);
     let (closed, superseded) = (closed(log), superseded(log));
     let mut out = String::new();
@@ -52,12 +64,19 @@ pub fn render(log: &Log, rows: &[&Row], budget: usize) -> String {
             (None, Some(t)) => format!(" (to: {t})"),
             (None, None) => String::new(),
         };
-        let text = r.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = r.display_title();
         let line = format!(
             "- [{id}] {}{mark}{key} {text}{route} → {}\n",
             r.kind,
             r.files.join(", ")
         );
+        // bodies read on demand only: the indented full text under its title line
+        let line = if full {
+            let body = r.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            format!("{line}  {body}\n")
+        } else {
+            line
+        };
         used += est_tokens(&line);
         if i > 0 && used > budget {
             out.push_str(&format!(

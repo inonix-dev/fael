@@ -3,7 +3,7 @@
 //! Tool failures come back as `isError` results so the agent reads the fix; only protocol
 //! faults are JSON-RPC errors.
 
-use crate::{Filter, aliases, close_row, core, read, repo, write::AddOpts, write::add_row};
+use crate::{aliases, close_row, core, read, repo, write::AddOpts, write::add_row};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -90,16 +90,22 @@ fn files(a: &Value) -> Vec<String> {
 
 fn find(a: &Value) -> Result<String, String> {
     let r = repo()?;
-    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
     let log = read(&r);
-    let f = Filter {
+    // `find {"id": ...}` pulls that row's body by exact id or unique prefix —
+    // lists show titles, this is how the body is read on demand
+    if let Some(id) = s(a, "id") {
+        let row = core::resolve(&log, &id)?;
+        return Ok(core::render_full(&log, &[row], 10_000));
+    }
+    let files = core::normalize_files(&files(a), &r.cwd, &r.root)?;
+    let f = core::Filter {
         text: s(a, "text"),
         files: aliases::load(&r, &log, true).expand_all(&files),
         key: s(a, "key"),
         kind: s(a, "kind"),
         since: s(a, "since"),
         to: s(a, "to").map(|t| t.trim().to_lowercase()),
-        ..Filter::default()
+        ..core::Filter::default()
     };
     let (mut rows, budget) = core::query(&log, &f, &r.cfg);
     if let Some(n) = a["limit"].as_u64() {
@@ -107,6 +113,8 @@ fn find(a: &Value) -> Result<String, String> {
     }
     Ok(if rows.is_empty() {
         "no rows match".into()
+    } else if a["full"].as_bool().unwrap_or(false) {
+        core::render_full(&log, &rows, budget)
     } else {
         core::render(&log, &rows, budget)
     })
@@ -122,6 +130,7 @@ fn add(a: &Value) -> Result<String, String> {
         AddOpts {
             key: s(a, "key"),
             to: s(a, "to"),
+            title: s(a, "title"),
             urgent: urgent_ask(a)?,
             supersedes: s(a, "supersedes"),
             force: a["force"].as_bool().unwrap_or(false),
@@ -193,6 +202,8 @@ fn tools() -> Value {
     Call it at the start of a task and before touching a file. No arguments = the session brief.",
             "annotations": {"readOnlyHint": true},
             "inputSchema": {"type": "object", "properties": {
+                "id": str_("this row's body by exact id or unique prefix — lists show titles, this pulls the body"),
+                "full": {"type": "boolean", "description": "show every row's body under its title"},
                 "files": files("repo-relative paths, directories, globs, or anchors like doc:pricing — rows on any of them"),
                 "text": str_("case-insensitive substring of the row text"),
                 "key": str_("key glob, e.g. auth:*"),
@@ -208,10 +219,12 @@ fn tools() -> Value {
     or state a later session needs (note). One standalone sentence or two — it is read months later with no chat. \
     files must name what it is about; reuse a path or anchor that find already showed instead of inventing a new one. \
     files may be omitted when this session edited files (the hook recorded them) — they are filled in; otherwise files is required. \
+    title is the ≤15-word headline lists show, text is the detail pulled by id — set title when text tops ~60 words. \
     Saw something broken, inconsistent or likely to break? Add it as kind issue right there — do not wait for the end of the task.",
             "inputSchema": {"type": "object", "required": ["kind", "text"], "properties": {
                 "kind": str_("decision | issue | note, or a kind the repo declares"),
                 "text": str_("what happened and why, standalone"),
+                "title": str_("≤15-word headline lists show; the body is pulled by id — set it when text tops ~60 words"),
                 "files": {"type": "array", "items": {"type": "string"},
                     "description": "repo-relative paths, or anchors scheme:ref (doc:pricing, customer:acme) for things that are not files — omit to use this session's edited files"},
                 "key": str_("optional colon key, e.g. auth:session"),

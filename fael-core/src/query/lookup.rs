@@ -114,6 +114,22 @@ pub fn warnings(row: &Row, log: &Log, cfg: &Config) -> Vec<String> {
             cfg.warn_row_tokens
         ));
     }
+    // lists show the title, bodies are pulled by id — a long untitled row
+    // costs its full text on every push
+    let words = row.text.split_whitespace().count();
+    if words > 60 && row.title.as_deref().is_none_or(|t| t.trim().is_empty()) {
+        w.push(format!(
+            "warning: text is {words} words with no title — add --title \"<≤15-word headline>\" so lists stay skimmable"
+        ));
+    }
+    if let Some(t) = row.title.as_deref() {
+        let n = t.split_whitespace().count();
+        if n > 15 {
+            w.push(format!(
+                "warning: title is {n} words (aim ≤ 15) — lists show it in full on every push"
+            ));
+        }
+    }
     w
 }
 

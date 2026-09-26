@@ -35,6 +35,12 @@ pub struct Row {
     /// row, `fael bump` moves it later. Top-level like `to`, same compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgent: Option<f64>,
+    /// The ≤ ~15-word headline lists show (chunk 4): agents skim titles,
+    /// then pull the body by id (`find <id>`, `--full`). Optional — rows
+    /// without one render the first sentence of `text` instead. Top-level
+    /// like `to`, same compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +71,30 @@ impl Row {
                 })
             })
             .filter(|u| u.is_finite())
+    }
+
+    /// What lists show: the `title` when set, else the first sentence of
+    /// `text` cut at ~20 words + `…` (old rows never get a title, no backfill).
+    /// A short single-sentence text renders unchanged — no `…` when nothing
+    /// was dropped.
+    pub fn display_title(&self) -> String {
+        if let Some(t) = self.title.as_deref() {
+            let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !t.is_empty() {
+                return t;
+            }
+        }
+        let one = self.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let end = first_sentence_end(&one);
+        let (head, rest) = (&one[..end], one[end..].trim());
+        let words: Vec<&str> = head.split_whitespace().collect();
+        if words.len() > 20 {
+            format!("{} …", words[..20].join(" "))
+        } else if rest.is_empty() {
+            head.to_string()
+        } else {
+            format!("{head} …")
+        }
     }
 
     /// A fresh v1 add row stamped with a ULID and the current UTC time.
@@ -119,6 +149,19 @@ impl Row {
     pub fn to_line(&self) -> String {
         serde_json::to_string(self).expect("Row always serialises")
     }
+}
+
+/// Byte index just past the first sentence end (`.`/`!`/`?` followed by
+/// whitespace or end), or the whole string when there is none — so `src/a.rs`
+/// mid-text never splits a title, only a real sentence break does.
+fn first_sentence_end(s: &str) -> usize {
+    let b = s.as_bytes();
+    for (i, &c) in b.iter().enumerate() {
+        if matches!(c, b'.' | b'!' | b'?') && b.get(i + 1).is_none_or(|n| n.is_ascii_whitespace()) {
+            return i + 1;
+        }
+    }
+    s.len()
 }
 
 /// Who wrote a row and where the tree stood — the adapter fills it: git on a dev box,

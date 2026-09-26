@@ -166,6 +166,58 @@ fn add_find_close_round_trip() {
 }
 
 #[test]
+fn add_title_lists_show_body_by_id() {
+    let d = repo();
+    let body = "the refund job double-charges when the queue retries a timed-out worker";
+    let (ok, out, err) = fael(
+        &d,
+        &[
+            "add",
+            "issue",
+            body,
+            "--files",
+            "src/a.rs",
+            "--title",
+            "refund job double-charges",
+        ],
+    );
+    assert!(ok, "{err}");
+    let id = out.split_whitespace().next().unwrap().to_string();
+    let (_, out, _) = fael(&d, &["find", "--json", "--files", "src/a.rs"]);
+    assert!(
+        out.contains("\"title\":\"refund job double-charges\""),
+        "{out}"
+    );
+    // lists show the title, never the body
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs"]);
+    assert!(
+        out.contains("refund job double-charges → src/a.rs"),
+        "{out}"
+    );
+    assert!(!out.contains("timed-out worker"), "{out}");
+    // text search finds titles too
+    let (_, out, _) = fael(&d, &["find", "double-charges"]);
+    assert!(out.contains("refund job double-charges"), "{out}");
+    // the body comes back by id, or with --full
+    let (_, out, _) = fael(&d, &["find", &id[..12]]);
+    assert!(
+        out.contains("refund job double-charges") && out.contains("timed-out worker"),
+        "{out}"
+    );
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--full"]);
+    assert!(out.contains("timed-out worker"), "{out}");
+    // no title: a 25-word row lists its first 20 words + …
+    let long = (1..=25)
+        .map(|i| format!("w{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (ok, _, err) = fael(&d, &["add", "note", &long, "--files", "src/a.rs"]);
+    assert!(ok, "{err}");
+    let (_, out, _) = fael(&d, &["find", "--files", "src/a.rs", "--kind", "note"]);
+    assert!(out.contains("w20 …") && !out.contains("w21"), "{out}");
+}
+
+#[test]
 fn config_kinds_and_bad_config() {
     let d = repo();
     std::fs::create_dir_all(d.join(".fael")).unwrap();
@@ -287,9 +339,10 @@ fn mcp_add_find_to() {
     use std::io::Write;
     let d = repo();
     let msgs = [
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"kind":"issue","text":"whose call is it","files":["src/a.rs"],"to":"Ploy"}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"kind":"issue","text":"whose call is it really when the pager fires at night","files":["src/a.rs"],"to":"Ploy","title":"short headline"}}}"#,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find","arguments":{"to":"ploy"}}}"#,
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find","arguments":{"to":"delamind"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find","arguments":{"to":"ploy","full":true}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"find","arguments":{"to":"delamind"}}}"#,
     ];
     let mut c = Command::new(env!("CARGO_BIN_EXE_fael"))
         .arg("mcp")
@@ -309,12 +362,17 @@ fn mcp_add_find_to() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(r.len(), 3, "{out}");
+    assert_eq!(r.len(), 4, "{out}");
     assert_eq!(r[0]["result"]["isError"], false, "{out}");
+    // lists show the title, never the body
     let text = r[1]["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("whose call is it (to: ploy)"), "{text}");
+    assert!(text.contains("short headline (to: ploy)"), "{text}");
+    assert!(!text.contains("pager fires"), "{text}");
+    // full:true pulls the body under the title
+    let text = r[2]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("pager fires at night"), "{text}");
     assert_eq!(
-        r[2]["result"]["content"][0]["text"].as_str().unwrap(),
+        r[3]["result"]["content"][0]["text"].as_str().unwrap(),
         "no rows match",
         "{out}"
     );

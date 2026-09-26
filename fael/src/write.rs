@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub(crate) struct AddOpts {
     pub key: Option<String>,
     pub to: Option<String>,
+    pub title: Option<String>,
     pub urgent: core::Urgent,
     pub supersedes: Option<String>,
     pub force: bool,
@@ -34,6 +35,7 @@ pub(crate) fn add_row(
     let AddOpts {
         key,
         to,
+        title,
         urgent,
         supersedes,
         force,
@@ -53,6 +55,10 @@ pub(crate) fn add_row(
     let st = crate::stamp(r);
     let mut row = core::Row::new(&st.by, kind, text, files);
     row.key = key;
+    // a headline lists show; the body stays in `text` for `find <id>` / `--full`
+    row.title = title
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     // everything identity-like is lowercase: `--to Delamind` stores `delamind`
     row.to = to
         .map(|t| t.trim().to_lowercase())

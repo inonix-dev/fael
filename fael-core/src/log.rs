@@ -206,7 +206,7 @@ pub fn add_row(
 }
 
 /// Change routing/urgency on an open row as a new version (MVCC-style): the
-/// same kind, text, files and key, new `to`/`urgent`, superseding the old row
+/// same kind, title, text, files and key, new `to`/`urgent`, superseding the old row
 /// — the one add path every adapter (CLI, MCP, a server) goes through, so the
 /// old version hides through `superseded()` with no new visibility rule.
 /// `to`: `None` keeps the old value, `Some("")` clears it, anything else sets
@@ -249,6 +249,7 @@ pub fn bump_row(
     };
     let mut row = Row::new(&stamp.by, &old.kind, &old.text, old.files.clone());
     row.key = old.key.clone();
+    row.title = old.title.clone();
     row.to = to;
     row.urgent = urgent;
     add_row(fael, log, cfg, stamp, row, Some(&old.id))
