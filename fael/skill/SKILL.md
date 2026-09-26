@@ -21,6 +21,8 @@ goes to the next one. Rows live in `.fael/log/` and travel with the repo.
 Each row is read months later with no chat: one or two standalone sentences.
 `--files` is required — name the paths (or anchors like `doc:pricing`) it is about;
 reuse one `fael find` already showed instead of inventing a new one.
+Planning work? `--files plan:<name>` (e.g. `plan:fael-direction`) — `fael kickoff PLAN-<name>.md`
+pulls it back; one markdown file never pushes rows filed against another.
 With the MCP server connected, the tools `find` / `add` / `close` do the same.
 
 The Stop hook will not let a turn end that edited files with no row after the

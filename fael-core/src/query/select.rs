@@ -265,10 +265,28 @@ pub fn brief<'a>(log: &'a Log, f: &Filter) -> Vec<&'a Row> {
     find(log, f)
 }
 
+/// A `PLAN-<name>.md` path also names the `plan:<name>` anchor, so planning
+/// rows filed under the anchor (not a guessed code file) surface on
+/// `fael kickoff <planDir>/PLAN-<name>.md` (PLAN-fael-direction chunk 6).
+/// The anchor ref is lowercased — everything identity-like is.
+fn plan_anchor(file: &str) -> Option<String> {
+    let base = file.rsplit('/').next().unwrap_or(file);
+    let stem = base.strip_prefix("PLAN-")?;
+    if stem.len() <= 3 || !stem[stem.len() - 3..].eq_ignore_ascii_case(".md") {
+        return None;
+    }
+    let name = &stem[..stem.len() - 3];
+    if name.is_empty() {
+        return None;
+    }
+    Some(format!("plan:{}", name.to_lowercase()))
+}
+
 /// What a session opens with (`fael kickoff`, the session-start hook): the brief minus
 /// rows whose files are gone, open issues first, then everything else by how fresh it is —
 /// the newer of the row itself and the last change to any of its files. So an old decision
 /// about a file nobody touches sinks, and one about the file changed yesterday rises.
+/// A PLAN path widens the filter with its `plan:<name>` anchor (see `plan_anchor`).
 // ponytail: file mtime is the "current work" signal — no git spawn on session start; a fresh
 // clone or checkout resets mtimes, then the order falls back to roughly newest-row first.
 pub fn kickoff<'a>(log: &'a Log, f: &Filter, root: &Path, al: &Aliases) -> Vec<&'a Row> {
@@ -288,12 +306,25 @@ pub fn kickoff<'a>(log: &'a Log, f: &Filter, root: &Path, al: &Aliases) -> Vec<&
             .map(|d| d.as_millis() as i64)
             .fold(row_ms, i64::max)
     };
-    let rows: Vec<&Row> = find(log, f)
+    let rows: Vec<&Row> = find(log, &widened(f))
         .into_iter()
         .filter(|r| !gone(root, r, al))
         .collect();
     // find() is ranked already, and the stable rank keeps that for ties
     ranked(rows, None, |_| 0, fresh)
+}
+
+/// Widen a kickoff filter with `plan:<name>` anchors (see `plan_anchor`).
+fn widened(f: &Filter) -> Filter {
+    let mut out = f.clone();
+    for file in &f.files {
+        if let Some(a) = plan_anchor(file)
+            && !out.files.iter().any(|q| q == &a)
+        {
+            out.files.push(a);
+        }
+    }
+    out
 }
 
 /// The read/edit push: rows about `files`, ranked so the most actionable comes

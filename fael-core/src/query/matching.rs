@@ -6,14 +6,25 @@ pub(super) fn zone(q: &str, f: &str) -> bool {
 }
 
 /// Same directory: both are paths (never anchors) with equal parent dirs.
+/// Markdown never counts: a dir of plans/docs is a pile of unrelated
+/// documents, a dir of code is a module (PLAN-fael-direction chunk 6) — so
+/// editing one plan does not push rows filed against another.
 pub(super) fn same_dir(q: &str, f: &str) -> bool {
     if anchor(q).is_some() || anchor(f).is_some() {
+        return false;
+    }
+    if is_md(q) || is_md(f) {
         return false;
     }
     fn dir(s: &str) -> &str {
         s.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
     }
     dir(q) == dir(f)
+}
+
+/// Markdown by extension, case-insensitive (`README.MD` counts).
+fn is_md(s: &str) -> bool {
+    s.len() >= 3 && s[s.len() - 3..].eq_ignore_ascii_case(".md")
 }
 
 /// Readers accept legacy spellings: `\` separators and a leading `./`.

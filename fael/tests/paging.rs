@@ -106,6 +106,35 @@ fn kickoff_pages_too() {
 }
 
 #[test]
+fn kickoff_pulls_plan_anchored_rows() {
+    let d = repo();
+    // planning rows anchor to plan:<name>, not a code file (chunk 6)
+    std::fs::create_dir_all(d.join(".fapony/plan")).unwrap();
+    std::fs::write(d.join(".fapony/plan/PLAN-foo.md"), "plan").unwrap();
+    std::fs::write(d.join(".fapony/plan/PLAN-bar.md"), "other").unwrap();
+    let (ok, _, err) = fael(&d, &["add", "note", "foo direction", "--files", "plan:foo"]);
+    assert!(ok, "{err}");
+    let (ok, _, err) = fael(
+        &d,
+        &[
+            "add",
+            "note",
+            "bar direction",
+            "--files",
+            ".fapony/plan/PLAN-bar.md",
+        ],
+    );
+    assert!(ok, "{err}");
+    // kickoff on the PLAN file pulls the anchored row, not the neighbouring plan
+    let (ok, out, err) = fael(&d, &["kickoff", ".fapony/plan/PLAN-foo.md"]);
+    assert!(ok, "{err}");
+    assert!(
+        out.contains("foo direction") && !out.contains("bar direction"),
+        "{out}"
+    );
+}
+
+#[test]
 fn mcp_find_pages_like_the_cli() {
     use std::io::Write;
     let d = repo();

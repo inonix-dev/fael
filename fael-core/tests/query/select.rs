@@ -149,6 +149,66 @@ fn push_ranks_exact_then_dir_then_key() {
 }
 
 #[test]
+fn push_ignores_same_dir_for_markdown() {
+    let mut l = log();
+    l.rows.push(row(
+        "C0000000000000000000000016",
+        "note",
+        &[".fapony/plan/PLAN-a.md"],
+        None,
+    ));
+    l.rows.push(row(
+        "C0000000000000000000000017",
+        "note",
+        &[".fapony/plan/PLAN-b.md"],
+        None,
+    ));
+    let q = |f: &[&str]| {
+        ids(&push(
+            &l,
+            &f.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &Aliases::default(),
+        ))
+    };
+    // the exact markdown file still pushes; the neighbouring plan does not —
+    // a dir of docs is a pile of unrelated documents (chunk 6)
+    assert_eq!(q(&[".fapony/plan/PLAN-a.md"]), ["16"]);
+    // code keeps its same-dir tier
+    assert_eq!(q(&["src/a.rs"]), ["14", "13"]);
+}
+
+#[test]
+fn kickoff_matches_plan_anchor() {
+    let r = std::env::temp_dir().join(format!("fael-kick-plan-{}", ulid()));
+    std::fs::create_dir_all(r.join(".fapony/plan")).unwrap();
+    std::fs::write(r.join(".fapony/plan/PLAN-foo.md"), "plan").unwrap();
+    let l = Log {
+        rows: vec![
+            row("A0000000000000000000000010", "note", &["plan:foo"], None),
+            row(
+                "A0000000000000000000000011",
+                "note",
+                &[".fapony/plan/PLAN-bar.md"],
+                None,
+            ),
+        ],
+        closes: vec![],
+        warnings: vec![],
+    };
+    // the PLAN path widens to its `plan:<name>` anchor; the other plan stays out
+    let f = Filter {
+        files: vec![".fapony/plan/PLAN-foo.md".into()],
+        ..Filter::default()
+    };
+    assert_eq!(
+        ids(&kickoff(&l, &f, &r, &Aliases::default())),
+        ["10"]
+    );
+    // a non-plan query never matches the anchor
+    assert!(kickoff(&l, &files(&["src/a.rs"]), &r, &Aliases::default()).is_empty());
+}
+
+#[test]
 fn push_shares_key_with_exact_hit() {
     let mut l = log();
     l.rows.push(row(
