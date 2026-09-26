@@ -5,14 +5,16 @@
 [![CI](https://github.com/inonix-dev/fael/actions/workflows/ci.yml/badge.svg)](https://github.com/inonix-dev/fael/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Your coding agents forget everything between sessions. fael makes them write it down — in the repo.**
+**Every agent on your repo knows what was decided and what's still open — without re-asking, and
+without a context dump.**
 
-Every session, an agent finds the same flaky test, re-asks why that function looks weird, and
-repeats the mistake the last agent already fixed. What it learned lived in a chat that is now gone.
+One person runs five agents; a team runs fifty. Each one starts from zero: it finds the same flaky
+test, re-asks why that function looks weird, and repeats the mistake the last agent already fixed.
+Memory tools that try to help stuff a summary of everything into context before the agent has said
+what it's about to do — you pay tokens for noise, and the one row that mattered gets averaged away.
 
-Asking agents to "take notes" doesn't work — they forget to, and nobody reads the notes anyway.
-fael fixes both ends: the agent **can't finish without writing**, and it **can't open a file without
-reading** what was written about it.
+fael works the other way round: the agent **can't finish without writing**, and when it opens a
+file it gets **only what was written about that file**. The file it touches is the question.
 
 fael gives the repo a memory that agents can't skip:
 
@@ -20,8 +22,8 @@ fael gives the repo a memory that agents can't skip:
   asks for a note. Mention a bug without filing it? Same.
 - **Memory finds them.** When an agent reads a file, the decisions and open bugs about *that file*
   come attached — nobody has to remember to search.
-- **It costs almost nothing to read.** Memory is pushed per file and cut to a token budget, so an
-  agent sees only the rows about the file in front of it (800 tokens by default) — not a notes dump.
+- **No spam in context.** Rows are pushed per file, once per session, and cut to a token budget
+  (800 by default) — not a notes dump. Anything else the agent asks for itself, through MCP.
   `fael stats` shows exactly what fael has put into context.
 - **It follows the code.** Rename a file and its rows follow it (`git log -M`). Split one into
   several and `fael mv old new` points the rows at the new files.
