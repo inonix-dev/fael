@@ -44,7 +44,8 @@ git push -q origin main --follow-tags
 echo "v$old -> v$new pushed."
 
 # owner's machine: pull every fael worktree onto the new main (alias fael-sync); skipped where `repos` is absent
-if command -v repos >/dev/null 2>&1; then repos fael sync; fi
+# a worktree that can't fast-forward is not a release failure — report it and keep going
+if command -v repos >/dev/null 2>&1; then repos fael sync || echo "release: fael sync had failures (above) — continuing" >&2; fi
 
 # wait for the tag's release.yml (GitHub Release + npm + brew), then move this machine's npm install onto it
 run=
@@ -57,6 +58,11 @@ done
 gh run watch "$run" --exit-status >/dev/null || { echo "release: release.yml run $run failed — gh run rerun $run --failed" >&2; exit 1; }
 echo "release.yml $run green"
 if npm ls -g @zecalis/fael >/dev/null 2>&1; then
+  # registry lag has no fixed length (usually seconds) — poll up to 5 min instead of guessing a sleep
+  for _ in $(seq 30); do
+    [ "$(npm view "@zecalis/fael@$new" version 2>/dev/null)" = "$new" ] && break
+    sleep 10
+  done
   npm i -g "@zecalis/fael@$new" >/dev/null && echo "local fael -> $new (npm)" \
-    || echo "release: npm has no $new yet (registry lag) — run: npm i -g @zecalis/fael@$new" >&2
+    || echo "release: npm has no $new after 5 min — run: npm i -g @zecalis/fael@$new" >&2
 fi
